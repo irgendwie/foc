@@ -325,7 +325,7 @@ Thread::user_sp(Mword sp)
 IMPLEMENT inline
 Mword
 Thread::user_flags() const
-{ return 0; }
+{ return state() & Thread_ready; }
 
 PUBLIC inline NEEDS ["trap_state.h"]
 int
