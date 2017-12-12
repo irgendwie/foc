@@ -958,6 +958,7 @@ Context::schedule()
         }
 
       rq->schedule_in_progress = this;
+      dbgprintf("%llu,\nscheduled %d,%d,%llu,",Timer::system_clock()/1000,current_cpu,Kobject_dbg::obj_to_id(next_to_run->sched()),Timer::system_clock()/1000);
       Proc::preemption_point();
       if (EXPECT_TRUE(current_cpu == ::current_cpu()))
         rq->schedule_in_progress = 0;
@@ -1153,6 +1154,7 @@ Context::consume_time(Clock::Time quantum)
 {
   if(_consumed_time==0) {
 	_start_time=Timer::system_clock();
+	printf("\nstart_time %d,%llu,\n",Kobject_dbg::obj_to_id(this->sched()),_start_time/1000);
   }
   _consumed_time += quantum;
 }
