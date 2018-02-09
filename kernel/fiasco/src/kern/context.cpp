@@ -376,6 +376,10 @@ public:
   void set_dead_time(Clock::Time dead);
   Cpu_time get_dead_time();
   Cpu_time get_time();
+  Cpu_time get_last_start();
+  void set_last_start(Cpu_time start);
+  int get_last_id();
+  void set_last_id(int id);
 
   virtual bool kill() = 0;
 
@@ -440,6 +444,8 @@ private:
   Clock::Time _consumed_time;
   Clock::Time _start_time;
   Clock::Time _dead_time;
+  Clock::Time _last_start;
+  int _last_id;
 
   Drq _drq;
   Drq_q _drq_q;
@@ -958,7 +964,12 @@ Context::schedule()
         }
 
       rq->schedule_in_progress = this;
-      dbgprintf("%llu,\nscheduled %d,%d,%llu,",Timer::system_clock()/1000,current_cpu,Kobject_dbg::obj_to_id(next_to_run->sched()),Timer::system_clock()/1000);
+      unsigned long long time=Timer::system_clock()/1000;
+      int id=Kobject_dbg::obj_to_id(next_to_run->sched());
+      int last_id=get_last_id();
+      if(last_id>0) printf("\nscheduled %d,%d,%llu,%llu\n",current_cpu,last_id,get_last_start(),time);
+      set_last_id(id);
+      set_last_start(time);
       Proc::preemption_point();
       if (EXPECT_TRUE(current_cpu == ::current_cpu()))
         rq->schedule_in_progress = 0;
@@ -1210,6 +1221,34 @@ Cpu_time
 Context::get_time()
 {
 	return Timer::system_clock();
+}
+
+IMPLEMENT
+Cpu_time
+Context::get_last_start()
+{
+	return Context::kernel_context(current_cpu())->_last_start;
+}
+
+IMPLEMENT
+void
+Context::set_last_start(Cpu_time start)
+{
+	Context::kernel_context(current_cpu())->_last_start=start;
+}
+
+IMPLEMENT
+int
+Context::get_last_id()
+{
+	return Context::kernel_context(current_cpu())->_last_id;
+}
+
+IMPLEMENT
+void
+Context::set_last_id(int id)
+{
+	Context::kernel_context(current_cpu())->_last_id=id;
 }
 
 /**
