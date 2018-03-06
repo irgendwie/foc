@@ -378,6 +378,8 @@ public:
   Cpu_time get_time();
   Cpu_time get_last_start();
   void set_last_start(Cpu_time start);
+  Cpu_time get_last_preempt();
+  void set_last_preempt(Cpu_time preempt);
   int get_last_id();
   void set_last_id(int id);
 
@@ -445,6 +447,7 @@ private:
   Clock::Time _start_time;
   Clock::Time _dead_time;
   Clock::Time _last_start;
+  Clock::Time _last_preempt;
   int _last_id;
 
   Drq _drq;
@@ -1247,6 +1250,22 @@ Context::set_last_start(Cpu_time start)
 {
 	Context::kernel_context(current_cpu())->_last_start=start;
 }
+
+IMPLEMENT
+Cpu_time
+Context::get_last_preempt()
+{
+	return Context::kernel_context(current_cpu())->_last_preempt;
+}
+
+IMPLEMENT
+void
+Context::set_last_preempt(Cpu_time preempt)
+{
+	Context::kernel_context(current_cpu())->_last_preempt=preempt;
+}
+
+
 
 IMPLEMENT
 int
