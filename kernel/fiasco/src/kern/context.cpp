@@ -967,10 +967,21 @@ Context::schedule()
       unsigned long long time=Timer::system_clock()/1000;
       int id=Kobject_dbg::obj_to_id(next_to_run->sched());
       int last_id=get_last_id();
-      if(last_id>0) printf("\nscheduled %d,%d,%llu,%llu\n",current_cpu,last_id,get_last_start(),time);
-      set_last_id(id);
-      set_last_start(time);
+      //if(last_id>0) printf("\nscheduled %d,%d,%llu,%llu\n",current_cpu,last_id,get_last_start(),time);
       Proc::preemption_point();
+      unsigned long long preempt_time=Timer::system_clock()/1000;
+      if(last_id==id)
+      {
+         //printf("\nscheduled %d,%d,%llu,%llu\n",current_cpu,id,get_last_start(),preempt_time);
+         set_last_preempt(preempt_time);
+      }
+      else
+      {    
+         printf("\nscheduled %d,%d,%llu,%llu\n",current_cpu,get_last_id(),get_last_start(),get_last_preempt());
+         set_last_id(id);
+         set_last_start(time);
+         set_last_preempt(preempt_time);
+      }
       if (EXPECT_TRUE(current_cpu == ::current_cpu()))
         rq->schedule_in_progress = 0;
       else
