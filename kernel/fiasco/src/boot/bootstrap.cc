@@ -42,6 +42,11 @@ exit(int)
     Proc::pause();
 }
 
+void assert_fail(char const *expr, char const *file, unsigned int line)
+{
+  panic("Assertion failed at %s:%u: %s\n", file, line, expr);
+}
+
 // test if [start1..end1-1] overlaps [start2..end2-1]
 static
 void
@@ -82,7 +87,7 @@ bootstrap()
   printf("Boot: kernel memory reserved\n");
 
   // make sure that we did not forgot to discard an unused header section
-  // (compare "objdump -p fiasco.image")
+  // (compare "objdump -p fiasco.debug")
   if ((Address)_start < Mem_layout::Kernel_image)
     panic("Fiasco kernel occupies memory below %014lx",
           (unsigned long)Mem_layout::Kernel_image);

@@ -27,7 +27,9 @@
 # Clean-rules are defined here.
 #
 
-$(GENERAL_D_LOC): $(L4DIR)/mk/binary.inc $(L4DIR)/mk/modes.inc
+$(GENERAL_D_LOC): $(L4DIR)/mk/binary.inc $(L4DIR)/mk/modes.inc $(L4DIR)/mk/rules.inc
+
+SRC_CC_IS_CXX11 ?= y
 
 # our default Makefile-name in the OBJ-Subdirs
 BID_OBJ_Makefile ?= Makefile
@@ -55,23 +57,14 @@ ifneq ($(strip $(SRC_F)$(foreach t,$(TARGET),$(SRC_F_$(t)))),)
     ifeq ($(GCCFORTRANAVAIL),)
       $(info $(shell echo -e "\033[32mFortran compiler (gcc-4.6 or later) missing, skipping directory '$(SRC_DIR)'.\033[0m"))
       SYSTEMS =
-    else
-      ifeq ($(filter 4.6 4.7 4.8 4.9 5,$(GCCVERSION)),)
-        $(info $(shell echo -e "\033[32mFortran compiler gcc version 4.6 or later required, skipping directory '$(SRC_DIR)'.\033[0m"))
-        SYSTEMS =
-      endif
     endif
   endif
 endif
 
 ifneq ($(SRC_CC_IS_CXX11),)
-  ifeq ($(SRC_CC_IS_CXX11),c++0x)
-    ifeq ($(filter 4.5 4.6 4.7 4.8 4.9 5,$(GCCVERSION)),)
-      $(info $(shell echo -e "\033[32mGCC too old to compile C++11 sources in directory '$(SRC_DIR)'. At least version 4.5 required.\033[0m"))
-      SYSTEMS =
-    endif
-  else
-    ifeq ($(filter 4.7 4.8 4.9 5,$(GCCVERSION)),)
+  ifneq ($(SRC_CC_IS_CXX11),c++0x)
+    # gcc-4.5 and 4.6 only know about c++0x
+    ifeq ($(filter 4.7 4.8 4.9 5 6 7,$(GCCVERSION)),)
       $(info $(shell echo -e "\033[32mGCC too old to compile C++11 sources in directory '$(SRC_DIR)'. At least version 4.7 required.\033[0m"))
       SYSTEMS =
     endif
@@ -110,10 +103,10 @@ FILTER_SYSTEM = $(shell echo $(2)|$(AWKP) '\
 BID_ORIG_SYSTEM = $(shell echo $(2)|$(AWKP) '\
 		    BEGIN{m=s="$(1)";sub("_[^-]*","",m)}\
 		    {for(i=1;i<=NF;i++){\
-		 	if(m==$$i||s==$$i){if(s=="$(1)"){print $$i;exit}};\
+		 	if(m==$$i||s==$$i){print $$i;exit};\
 		 	if(index(m,$$i)==1||index(s,$$i)==1)\
 			    {t=s;sub("-.*","",t);\
-                             if(t=="$(1)"){print $$i;exit}}}}')
+                             if(m==$$i&&t=="$(1)"){print $$i;exit}}}}')
 
 ifeq ($(ROLE),idl.mk)
 TARGET_SYSTEMS := $(sort $(foreach sys,$(sort \
@@ -144,7 +137,7 @@ $(foreach sys,$(TARGET_SYSTEMS),$(OBJ_DIR)/OBJ-$(sys)/$(BID_OBJ_Makefile)):$(OBJ
 	@echo 'ARCH=$(call SYSTEM_TO_ARCH,$*)'>>$@
 	@echo 'CPU=$(call SYSTEM_TO_CPU,$*)'>>$@
 	@echo 'L4API=$(call SYSTEM_TO_L4API,$*)'>>$@
-	@for ext in .c .cc .cpp $(FORTRAN_FILE_EXTENSIONS) .S .y .l .ld .dpe; \
+	@for ext in .c .cc .cpp $(FORTRAN_FILE_EXTENSIONS) $(BID_ASM_FILE_EXTENSIONS) .y .l .ld .dpe .dts; \
 	  do echo "vpath %$$ext $(VPATH_SRC_BASE)">>$@ ; done
 	@echo '.general.d: $(SRC_DIR)/$(if $(wildcard Make.rules),Make.rules,Makefile)'>>$@
 	@echo 'include $(SRC_DIR)/$(if $(wildcard Make.rules),Make.rules,Makefile)'>>$@
@@ -206,16 +199,6 @@ L4INCDIR ?=	$(addprefix $(OBJ_BASE)/include/$(ARCH)/,$(L4API)) \
                 $(DROPS_STDDIR)/include/$(ARCH) \
                 $(DROPS_STDDIR)/include
 
-L4INCDIR_SYS ?=	$(addprefix $(OBJ_BASE)/include/sys/$(ARCH)/,$(L4API)) \
-                $(addprefix $(OBJ_BASE)/include/sys/,$(L4API)) \
-                $(OBJ_BASE)/include/sys/$(ARCH)/ \
-                $(OBJ_BASE)/include/sys \
-		$(if $(USE_DICE),$(DICE_INCDIR),)
-                $(addprefix $(DROPS_STDDIR)/include/sys/$(ARCH)/,$(L4API))) \
-                $(addprefix $(DROPS_STDDIR)/include/sys/,$(L4API))) \
-                $(DROPS_STDDIR)/include/sys/$(ARCH) \
-                $(DROPS_STDDIR)/include/sys
-
 L4LIBDIR ?=	$(addprefix $(OBJ_BASE)/lib/$(ARCH)_$(CPU)/,$(L4API)) \
                 $(OBJ_BASE)/lib/$(ARCH)_$(CPU) \
                 $(OBJ_BASE)/lib \
@@ -226,15 +209,9 @@ L4LIBDIR ?=	$(addprefix $(OBJ_BASE)/lib/$(ARCH)_$(CPU)/,$(L4API)) \
 else
 
 L4INCDIR ?=	$(addprefix $(OBJ_BASE)/include/$(ARCH)/,$(L4API)) \
-                $(addprefix $(OBJ_BASE)/include/,$(L4API)) \
+                $(wildcard $(addprefix $(OBJ_BASE)/include/,$(L4API))) \
                 $(OBJ_BASE)/include/$(ARCH) \
                 $(OBJ_BASE)/include \
-		$(if $(USE_DICE),$(DICE_INCDIR),)
-
-L4INCDIR_SYS ?=	$(addprefix $(OBJ_BASE)/include/sys/$(ARCH)/,$(L4API)) \
-                $(addprefix $(OBJ_BASE)/include/sys/,$(L4API)) \
-                $(OBJ_BASE)/include/sys/$(ARCH) \
-                $(OBJ_BASE)/include/sys \
 		$(if $(USE_DICE),$(DICE_INCDIR),)
 
 L4LIBDIR ?=     $(addprefix $(OBJ_BASE)/lib/$(ARCH)_$(CPU)/,$(L4API)) \
@@ -256,7 +233,6 @@ endif
 #
 # Additionally, the following variables are supported:
 # SRC_C, SRC_CC, SRC_F, SRC_S - .c, .cc, .f90, .S source files
-# CRT0, CRTN	- startup and finish code
 # LIBS		- additional libs to link (with -l), including paths (-L)
 # IDL		- interface definition files
 # TARGET	- targets to be built
@@ -289,18 +265,9 @@ endif
 
 LIBCINCDIR    ?= $(call BID_mode_var,LIBCINCDIR)
 LIBCLIBDIR    ?= $(call BID_mode_var,LIBCLIBDIR)
-L4_LIBS       ?= $(call BID_mode_var,L4_LIBS)
-CRT0	      ?= $(call BID_mode_var,CRT0)
-CRTP          ?= $(if $(filter $(CRT0_DEFAULT),$(CRT0)),$(CRTP_DEFAULT),$(CRT0))
-CRTN	      ?= $(call BID_mode_var,CRTN)
 LDSCRIPT      ?= $(call BID_mode_var,LDSCRIPT)
 LDFLAGS       += $(call BID_mode_var,LDFLAGS)
 REQUIRES_LIBS += $(REQUIRES_LIBS_$(ARCH)) $(call BID_mode_var,REQUIRES_LIBS)
-
-# we do not need to put our FLAG-definitions into a special file if we can
-# use the target to parameterize it and if it needs not to appear in the deps 
-#CRT0	=  $(word 1, $(CRT0_$@_$(OSYSTEM)) $(CRT0_$@) $(CRT0_$(OSYSTEM)))
-#CRTN	=  $(word 1, $(CRTN_$@_$(OSYSTEM)) $(CRTN_$@) $(CRTN_$(OSYSTEM)))
 
 LDFLAGS	+= $(strip $(LDFLAGS_$(OSYSTEM)) $(LDFLAGS_$@) $(LDFLAGS_$@_$(OSYSTEM)))
 CARCHFLAGS += $(CARCHFLAGS_$(ARCH)) $(CARCHFLAGS_$(ARCH)_$(CPU))
@@ -314,13 +281,13 @@ BID_MISSING_LIBS :=
 # 2: parameters to pkg-config
 # 3: list of packages
 # use L4_BID_PKG_CONFIG because of export-defs, the function is copied
-L4_BID_PKG_CONFIG = $(PKG_CONFIG)
-BID_PKG_CONFIG = $(if $(strip $(3)),                                     \
+L4_BID_PKG_CONFIG = $(L4DIR)/tool/bin/l4-bender
+BID_PKG_CONFIG =                                      \
                    $(shell PKG_CONFIG_LIBDIR=$(1)/pc                     \
                            PKG_CONFIG_PATH= $(L4_BID_PKG_CONFIG)         \
                            --define-variable=incdir=$(1)/include/contrib \
                            $(if $(VERBOSE),--silence-errors)             \
-			   $(2) $(3) || echo __PKGCONFIG_FAILED__))
+			   $(2) $(3) || echo __PKGCONFIG_FAILED__)
 
 BID_PKG_CONFIG_MISSING =                                        \
      $(if $(strip $(3)),                                        \
@@ -330,6 +297,27 @@ BID_PKG_CONFIG_MISSING =                                        \
                   | LANG=C grep ", not found"))
 
 BID_PKG_CONFIG_FAILED = $(findstring __PKGCONFIG_FAILED__,$(1))
+
+BID_BENDER_DEFINES = \
+	-Dl4obj=$(1)                  \
+	-Dl4dir=$(2)                  \
+	-Dgcclibdir="$(3:-L%=%)"      \
+	-Dl4system=$(4)               \
+	$(if $(5),-Dl4api=$(5))
+
+bid_bender_default_vars = $(call BID_BENDER_DEFINES,$(OBJ_BASE),$(L4DIR),$(GCCSYSLIBDIRS),$(ARCH)_$(CPU),$(L4API))
+
+# linker for L4 libs and applications
+BID_LINK = $(L4DIR)/tool/bin/l4-bender -t ld $(bid_bender_default_vars) -Dlinker="$(LD)" \
+           --spec=$(L4DIR)/mk/bid-bender.spec --
+
+# linker for host mode and l4linux mode
+BID_LINK_MODE_host = $(L4DIR)/tool/bin/l4-bender -t host-ld $(bid_bender_default_vars) -Dlinker="$(1)" \
+                     --spec=$(L4DIR)/mk/bid-bender.spec --
+
+BID_link_deps_file = $(dir $(1)).$(notdir $(1)).pcs.d
+
+BID_LINK_DEPS = $(addprefix $(dir $(1)),$(addprefix .$(notdir $(1)),.d .pcs.d))
 
 ifeq ($(BID_MISSING_PCS),)
  ifneq ($(SYSTEM),)
@@ -396,7 +384,8 @@ endif
 bid_flag_variants = $($(1)_$(OSYSTEM)) $($(1)_$@) $($(1)_$(@D)) $($(1)_$<) \
                     $($(1)_$(<F)) $($(1)_$(<D)) $($(1)_$(<F)_$(OSYSTEM))
 
-OPTS	         ?= -g -O2 -fno-strict-aliasing
+OPTS_DEBUG       ?= -g
+OPTS             ?= $(OPTS_DEBUG) -O2 -fno-strict-aliasing
 
 WARNINGS_MINIMAL ?= -Wall $(call bid_flag_variants,WARNINGS)
 WARNINGS_MEDIUM  ?= -Wall -Wstrict-prototypes -Wmissing-prototypes \
@@ -406,14 +395,12 @@ WARNINGS         ?= $(WARNINGS_FULL)
 
 ifeq ($(MODE),host)
 # never cross compile in host mode
-SYSTEM_TARGET = 
+override CROSS_COMPILE = 
 CC            = $(HOST_CC)
 CXX           = $(HOST_CXX)
-LIBS         += $(REQUIRES_LIBS_LIST)
 else
 # no architecture specific flags in host mode
 LDFLAGS      += $(LDFLAGS_$(ARCH))
-L4_LIBS      += $(REQUIRES_LIBS_LIST)
 endif
 
 # additional libraries go after the requires-libs-list
@@ -479,11 +466,11 @@ endif
 endif
 
 CPPFLAGS-DEBUG_MODE = \
-    $(addprefix -include, $(OBJ_BASE)/include/$(ARCH)/l4/sys/kdebug.h) \
-    $(addprefix -include, $(wildcard $(if $(L4API),$(OBJ_BASE)/include/$(ARCH)/$(L4API)/l4/sys/ktrace.h) \
-                                     $(OBJ_BASE)/include/$(ARCH)/l4/sys/ktrace.h)) \
-    -include $(OBJ_BASE)/include/l4/util/kprintf.h \
-    $(if $(L4API),-include $(OBJ_BASE)/include/l4/sys/debugger.h)
+    $(if $(L4API), \
+      $(addprefix -include ,$(OBJ_BASE)/include/l4/sys/kdebug.h \
+                            $(OBJ_BASE)/include/l4/sys/ktrace.h \
+                            $(OBJ_BASE)/include/l4/util/kprintf.h \
+                            $(OBJ_BASE)/include/l4/sys/debugger.h))
 
 CPPFLAGS+= $(call bid_flag_variants,CPPFLAGS)
 CPPFLAGS+= $(DEFINES)
@@ -493,11 +480,6 @@ CPPFLAGS+= $(BID_PKG_CONFIG_CFLAGS)
 #CPPFLAGS+= $(if $(CLIENTIDL)$(SERVERIDL)$(addprefix CLIENTIDL_,$(TARGET))$(addprefix SERVERIDL_,$(TARGET)),$(addprefix -I, $(IDL_PATH)))
 ifneq ($(MODE),host)
 CPPFLAGS+= $(addprefix -I, $(L4INCDIR))
-ifneq ($(BID_DISABLE_SYSTEM_HEADERS),)
-CPPFLAGS+= $(addprefix -I ,$(L4INCDIR_SYS))
-else
-CPPFLAGS+= $(addprefix -isystem ,$(L4INCDIR_SYS))
-endif
 endif
 CPPFLAGS+= $(if $(DEBUG_MODE),$(CPPFLAGS-DEBUG_MODE))
 CPPFLAGS+= $(LIBCINCDIR)
@@ -509,8 +491,10 @@ CXXFLAGS_L4_GENERIC += $(GCCSTACKPROTECTOROPT)
 CXXFLAGS_L4_GENERIC += -fuse-cxa-atexit
 endif
 
+CXXFLAGS_CXX11 = -std=gnu++11
+
 ifneq ($(SRC_CC_IS_CXX11),)
-  CXXFLAGS+= $(if $(filter 4.7 4.8 4.9 5,$(GCCVERSION)),-std=gnu++11,-std=gnu++0x)
+  CXXFLAGS+= $(CXXFLAGS_CXX11)
 endif
 
 CXXFLAGS+= $(if $(CONFIG_BID_GCC_OMIT_FP),-fomit-frame-pointer,-fno-omit-frame-pointer)
@@ -526,6 +510,14 @@ FFLAGS  += $(CFLAGS_L4_GENERIC)
 
 PICFLAGS += -fPIC -U__PIC__ -D__PIC__=1
 
+# select NOPIEFLAGS and NOPICFLAGS, use the most specific mode variable
+# first and the try the more generic _all_ and global version
+NOPICFLAGS_all_$(MODE)     ?= $(NOPICFLAGS)
+NOPICFLAGS_$(ARCH)_$(MODE) ?= $(NOPICFLAGS_all_$(MODE))
+
+NOPIEFLAGS_all_$(MODE)     ?= $(NOPIEFLAGS)
+NOPIEFLAGS_$(ARCH)_$(MODE) ?= $(NOPIEFLAGS_all_$(MODE))
+
 ifneq ($(MODE),host)
 ASFLAGS_L4_GENERIC += $(CARCHFLAGS) $(CCXX_FLAGS)
 endif
@@ -533,7 +525,6 @@ endif
 ASFLAGS += $(OPTS) $(ASFLAGS_L4_GENERIC)
 ASFLAGS += $(ASFLAGS_$(ARCH)) $(ASFLAGS_$(@:.o=.S)) $(ASFLAGS_$(@:.o=.S)_$(OSYSTEM))
 
-OBJS	+= $(strip $(OBJS_$(OSYSTEM)) $(OBJS_$@) $(OBJS_$@_$(OSYSTEM)))
 ALLOBJS  = $(OBJS) $(foreach target,$(TARGET) $(TARGET_$(OSYSTEM)),\
                              $(OBJS_$(target)) $(OBJS_$(target)_$(OSYSTEM)))
 ALLDPI = $(sort $(foreach obj,$(ALLOBJS),$(patsubst %.dpe,%.dpi,\
@@ -597,153 +588,164 @@ convert_cc_to_o_file = $(patsubst %.cc,%$(2).o, $(filter %.cc,$(1)))     \
                        $(if $(BID_ALLOW_CPP_AS_CPLUSPLUS_FILE),          \
 		         $(patsubst %.cpp,%$(2).o,$(filter %.cpp,$(1))))
 
+#
+# Get the combined contents of generic and target-specific variables.
+#
+# Returns:
+#  $(<var>) $(<var>_$(OSYSTEM)) $(<var>_<target>) $(<var>_<target>_$(OSYSTEM))
+#
+# arg: 1 - name of the variable (<var>), e.g. SRC_C
+#      2 - target name
+#
+get_target_var = $(strip                                     \
+                   $($(1))                                   \
+                   $(if $(OSYSTEM),$($(1)_$(OSYSTEM)))       \
+                   $($(1)_$(2))                              \
+                   $(if $(OSYSTEM),$($(1)_$(2)_$(OSYSTEM))))
+
 # convert list of Fortran file names to .o files
 # arg: 1 - list of files
 #      2 - infix between the basename and the .o
 convert_f_to_o_file = $(foreach e,$(FORTRAN_FILE_EXTENSIONS),$(patsubst %$e,%$(2).o,$(filter %$e,$(1))))
 
-# generic targetobjs
-# arg: 1 - target
-#      2 - infix between the basename and the .o
-#      3 - additional infix before .o in case of .cc files
-targetobjs_gen = $(call check_path,                                            \
-		        $(SRC_C:.c=$(2).o) $(SRC_S:.S=$(2).o)                  \
-                        $(call convert_cc_to_o_file,$(SRC_CC),$(2)$(3))        \
-                        $(call convert_f_to_o_file,$(SRC_F),$(2)$(3))          \
-                        $(foreach inter, $(OSYSTEM) $(1) $(1)_$(OSYSTEM),      \
-                            $(SRC_C_$(inter):.c=$(2).o)	                       \
-                            $(SRC_S_$(inter):.S=$(2).o)	                       \
-                            $(call convert_cc_to_o_file,$(SRC_CC_$(inter)),$(2)$(3)) \
-                            $(call convert_f_to_o_file,$(SRC_F_$(inter)),$(2)$(3)))  \
-                        $(patsubst %.c,%$(2).o,$(call IDL_SRC_Cfn,$(1))))
+convert_asm_to_o_file = $(foreach e,$(BID_ASM_FILE_EXTENSIONS),$(patsubst %$e,%$(2).o,$(filter %$e,$(1))))
 
-# a helper function to generate the object-files for a given target
-# arg: 1 - target
-#      2 - infix between the basename and the .o
-targetobjs   = $(call targetobjs_gen,$(1),$(2),)
+#
+# generic source to object file name converters
+# args: 1 - (list of) source file(s)
+#       2 - object file infix 1 (after the source base-name)
+#
+gen_SRC_CC_obj = $(call convert_cc_to_o_file,$(1),$(2))
+gen_SRC_C_obj  = $(1:.c=$(2).o)
+gen_SRC_S_obj  = $(call convert_asm_to_o_file,$(1),$(2))
+gen_SRC_F_obj  = $(call convert_f_to_o_file,$(1),$(2))
+gen_SRC_DATA_obj = $(addsuffix .bin.o,$1)
 
-# special version of targetobjs that shares objects between exception and
-# non-exception cases, we just need two versions for C++ files
-# arg: 1 - target
-#      2 - infix between the basename and the .o or .ne.o
-targetobjs_ne = $(call targetobjs_gen,$(1),$(2),.ne)
+#
+# Check source file constraints and generate and add the object file
+# name to OBJS_<target>.
+#
+# Generates:
+#   BID_OBJ_SRC_<object-name> := <source-name>
+#   BID_SRC_OBJ_<source-name> += <object-name>
+#   OBJS_<target>             += <object-name>
+#
+# Checks:
+# * source files must be relative paths
+# * there must be only one source file generating an object file
+#
+# arg: 1 - target name
+#      2 - object file name
+#      3 - source file name
+#
+define make_per_obj_vars
+  # $$(info make_per_obj_vars: '$(1)' '$(2)' '$(3)')
+  $$(if $$(filter /%,$(3)), $$(error Source file must be relative: $(3)))
+  $$(if $$(and $$(BID_OBJ_SRC_$(2)), $$(filter-out $$(BID_OBJ_SRC_$(2)), $(3))), \
+    $$(error $(2) has ambigous source files: $(3) $$(BID_OBJ_SRC_$(2))))
+  BID_OBJ_SRC_$(2) := $(3)
+  BID_SRC_OBJ_$(3) += $(2)
+  OBJS_$(1)        += $(2)
+endef
 
-# The directories our object files will go into. These dirs will be created
-# on generation of Makefile.inc in the OBJ- dirs.
-OBJDIRS = $(strip $(sort $(filter-out ./,$(dir 				\
-		$(foreach t,$(TARGET_STANDARD),				\
-			$(call targetobjs,$(t),))			\
-		$(foreach t,$(TARGET_STANDARD_NE),			\
-			$(call targetobjs,$(t),.ne))			\
-		$(foreach t,$(TARGET_SHARED),		                \
-			$(call targetobjs,$(t),))			\
-		$(foreach t,$(TARGET_SHARED_NE),		        \
-			$(call targetobjs,$(t),.ne))			\
-		$(foreach t,$(PROFILE),					\
-			$(call targetobjs,$(t),.pr))			\
-		$(foreach t,$(TARGET_PROFILE_PIC) $(TARGET_PROFILE_SHARED),\
-		$(call targetobjs,$(t),.pr.s))))))
+#
+# Make variables for all source files in $($(2))
+#
+# args: 1 - target
+#       2 - source var name (e.g., SRC_C)
+#       3 - object name infix 1
+#
+define make_per_source_type_vars
+  $(foreach src,$(call get_target_var,$(1),$(2)),\
+    $(eval $(call make_per_obj_vars,$(2),$(strip $(call gen_$(1)_obj,$(src),$(3))),$(src))))
+endef
 
-# The include file for the Makefile. This file contains definitions and
-# dependencies which are dynamically generated. Unfortunately, make does
-# not support variable declarations using the foreach function. Same
-# for rules.
-$(BID_OBJ_Makefile).inc: .general.d $(BID_RAM_BASE_DEP)
-	@$(BUILD_MESSAGE)
-	@$(ECHO) "# automatically generated, do not edit!" >$@_
-        # write helper variables containing the IDL-C-Sources
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET),		\
-		\nIDL_SRC_C_$(target)=$(call IDL_SRC_Cfn,$(target))))'>>$@_
-        # and add them to SRC_C
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET),		\
-		\nSRC_C_$(target) += $$(IDL_SRC_C_$(target))))'>>$@_
-        # but set the variables empty for the current rule
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET),		\
-		\n$(BID_OBJ_Makefile).inc: IDL_SRC_C_$(target)=))'>>$@_
-        # write helper variables containing the IDL-C++-Sources
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET),		\
-		\nIDL_SRC_CC_$(target)=$(call IDL_SRC_CCfn,$(target))))'>>$@_
-        # and add them to SRC_CC
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET),		\
-		\nSRC_CC_$(target) += $$(IDL_SRC_CC_$(target))))'>>$@_
-        # but set the variables empty for the current rule
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET),		\
-		\n$(BID_OBJ_Makefile).inc: IDL_SRC_CC_$(target)=))'>>$@_
-        # write the object declaration variables
-        # TARGET_{STANDARD, PIC, SHARED, STANDARD_NE, SHARED_NE}
-        #    contain the appropriate targets
-        # TARGET_PROFILE_{STANDARD, PIC, SHARED} as well
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET_STANDARD),	\
-		\nOBJS_$(target) += $(call targetobjs,$(target),)))' >>$@_
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET_STANDARD_NE),	\
-		\nOBJS_$(target) += $(call targetobjs_ne,$(target),)))' >>$@_
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET_PIC) $(TARGET_SHARED), \
-		\nOBJS_$(target) += $(call targetobjs,$(target),.s)))' >>$@_
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET_PIC_NE) $(TARGET_SHARED_NE), \
-		\nOBJS_$(target) += $(call targetobjs_ne,$(target),.s) \
-		\nLINK_WITH_NOEXC_LIBS_$(target) = y))' >>$@_
-	@$(ECHO) -en '$(strip $(foreach target,$(TARGET_PROFILE),	\
-		\nOBJS_$(target) += $(call targetobjs,$(target),.pr)))' >>$@_
-	@$(ECHO) -e '$(strip $(foreach target,$(TARGET_PROFILE_PIC) $(TARGET_PROFILE_SHARED),		\
-		\nOBJS_$(target) += $(call targetobjs,$(target),.pr.s)))' >>$@_
-        #
-        # write the dpe-dependencies
-	@$(ECHO) -e '$(foreach obj,$(sort 				\
-		$(foreach t,$(TARGET_STANDARD),$(call targetobjs,$t))	\
-		$(foreach t,$(TARGET_PIC) $(TARGET_SHARED),		\
-			$(call targetobjs,$t,.s))			\
-		$(foreach t,$(TARGET_PROFILE),$(call targetobjs,$t,.pr)) \
-		$(foreach t,$(TARGET_PROFILE_PIC) $(TARGET_PROFILE_SHARED),\
-			$(call targetobjs,$t,.pr.s))),$(strip		\
-		$(addprefix \n$(obj): ,$(patsubst %.dpe,%.dpi,		\
-		$(DPE_$(obj:.o=.c)) $(DPE_$(obj:.o=.cc))		\
-		$(DPE_$(obj:.s.o=.c)) $(DPE_$(obj:.s.o=.cc))		\
-		$(DPE_$(obj:.pr.o=.c)) $(DPE_$(obj:.pr.o=.cc))		\
-		$(DPE_$(obj:.pr.s.o=.c)) $(DPE_$(obj:.pr.s.o=.cc))	\
-		))))' >>$@_
-        #
-        # create the object-dirs
-	@$(if $(OBJDIRS), $(VERBOSE)set -e; for d in $(OBJDIRS); do	\
-		[ -d "$$d" ] || $(MKDIR) $$d; done )
+#
+# All supported SRC_<x> variables
+#
+BID_SRC_VARS ?= S C CC F DATA
 
-        #
-        # write the object-dependencies for the targets
-	@$(ECHO) -e '$(foreach target,$(TARGET),$(strip\
-	          \n$(target): $$(OBJS_$(target)) ))' >> $@_
-        # make the target dependent on '.general.d'
-	@$(ECHO) -e '$(foreach target,$(TARGET),$(strip			\
-	          \n$$(OBJS_$(target)): .general.d))'			\
-		>> $@_
-        # Using LDSO does not need a RELOC address, so omit the following in
-        # this case
+#
+# Generate per target/source/object variables for all sources
+# found in SRC_[$(BID_SRC_VARS)].
+#
+# args: 1 - target
+#       2 - object file infix 1
+#
+define make_per_target_vars
+  $(foreach svar,$(BID_SRC_VARS),$(call make_per_source_type_vars,SRC_$(svar),$(1),$(2)))
+endef
+
+# function to to use with $(eval ...) that generates per-target
+# SRC_C and SRC_CC entries for IDL-compiler generated source files
+# NOTE: no IDL compiler is currently used/supported so this function
+#       is not used.
+define per_target_idl_vars
+  IDL_SRC_C_$(1)  = $$(call IDL_SRC_Cfn,$(1))
+  SRC_C_$(1)     += $$(IDL_SRC_C_$(1))
+  IDL_SRC_CC_$(1) = $$(call IDL_SRC_CCfn,$(1))
+  SRC_CC_$(1)    += $$(IDL_SRC_CC_$(1))
+endef
+
+#
+# Generate all target / object / source specific variables and
+# dependencies for a given target.
+#
+# args: 1 - target name
+#       2 - object-file infix 1 (added after the source files base-name)
+#       3 - object-file infix 2 (added before the .o, only used for C++ files)
+#
+define make_per_target_vars_and_deps
+  $$(call make_per_target_vars,$(1),$(2),$(3))
+  OBJS_$(1) := $$(call get_target_var,OBJS,$(1))
+  $$(OBJS_$(1)): .general.d
+  $(1): OBJS = $$(OBJS_$(1))
+  $(1): $$(OBJS_$(1))
+endef
+
+# handle per-target DEFAULT_RELOC.
+#
+# Create a dependency to $(BID_RAM_BASE_DEP) and LDFLAGS for the given target.
+# NOTE: the handling depends on the global MODE setting in the Makefile.
 ifneq ($(MODE),shared)
-        # in case of a binary, write the link address
-        # the dependency to the static file: If DEFAULT_RELOC is set,
-        # all targets are made dependent on the STATIC file
-        # (defined in Makeconf).
-        # If DEFAULT_RELOC_xxx is set, xxx is made dependent on the
-        # STATIC file.
-ifneq ($(strip $(foreach target,$(TARGET), $(call default_reloc,$(target)))),)
-ifneq ($(filter l4linux host,$(MODE)),)
-	$(error DEFAULT_RELOC must not be set if MODE is l4linux or host)
+  ifneq ($(filter l4linux host,$(MODE)),)
+    define make_per_target_reloc
+      $$(error DEFAULT_RELOC / DEFAULT_RELOC_$(1) must not be set if MODE is l4linux or host)
+    endef
+  else
+    define make_per_target_reloc
+      $(1): $$(BID_RAM_BASE_DEP)
+      LDFLAGS_$(1) += --defsym=__executable_start=$$(firstword $$(call default_reloc,$(1)))
+    endef
+  endif
+else
+  define make_per_target_reloc
+  endef
 endif
-        # the relocatable binaries depend on Makefile.inc
-	@$(ECHO) -e '\n$(strip						 \
-		$(foreach target, $(TARGET),				 \
-			$(if $(call default_reloc,$(target)),$(target))) \
-		: $@)' >>$@_
-        # we find out the relocation address here.
-	@$(ECHO) -e '$(foreach target, $(TARGET),$(strip		\
-		\nLDFLAGS_$(target)+=  --defsym=__executable_start=$(firstword		\
-			$(call default_reloc,$(target)))))'	\
-		>>$@_
-endif
-endif # MODE != shared
-	@mv $@_ $@
 
-ifeq ($(filter scrub help,$(MAKECMDGOALS)),)
--include $(BID_OBJ_Makefile).inc
-endif
+#
+# Generate $(1): %.dpi -> %.dpe dependencies for one source file
+# arg: 1 - name of the C or C++ source file
+#
+# This function generates a dependency if DPE_$(1) is not empty
+#
+define gen_src_to_dpe_deps
+  $(if $(DPE_$(1)),$(eval $(SRC_DIR)/$(1): $(patsubst %.dpe,%.dpi,$(DPE_$(1)))))
+endef
+
+define gen_target_vars_and_deps
+  $(eval $(call make_per_target_vars_and_deps,$(1),$(2)))    \
+  $(foreach src,$(call get_target_var,SRC_C,$(1))            \
+                $(call get_target_var,SRC_CC,$(1)),          \
+                $(call gen_src_to_dpe_deps,$(src)))          \
+  $(if $(call default_reloc,$(1)),$(eval $(call make_per_target_reloc,$(1))))
+endef
+
+# Generate dependency rules and target-specific variables for all
+# targets, using the functions above.
+define GENERATE_PER_TARGET_RULES
+  $(foreach target,$(1),$(call gen_target_vars_and_deps,$(target),$(2)))
+endef
 
 #
 # Rules Section
@@ -823,21 +825,21 @@ $(eval $(call BID_GENERATE_C_MAKE_RULES,c))
 # generate rules to compile %.f90 files to %.o, %.s.o etc
 $(foreach e,$(FORTRAN_FILE_EXTENSIONS),$(eval $(call BID_GENERATE_F_MAKE_RULES,$(subst .,,$e))))
 # generate rules to compile %.S files to %.o, %.s.o etc
-$(eval $(call BID_GENERATE_DEFAULT_MAKE_RULES,%,%.S,AS))
+$(foreach e,$(BID_ASM_FILE_EXTENSIONS),$(eval $(call BID_GENERATE_ASM_MAKE_RULES,$(subst .,,$e))))
 
 # Reset implicit rules, mind the TAB.
 define reset_implicit_rule =
-%: $(1)
+%o: %$(1)
 	
 endef
 
-$(foreach e,.c .cc .cpp .S $(FORTRAN_FILE_EXTENSIONS),$(eval $(call reset_implicit_rule,$e)))
+$(foreach e,.c .cc .cpp $(BID_ASM_FILE_EXTENSIONS) $(FORTRAN_FILE_EXTENSIONS),$(eval $(call reset_implicit_rule,$e)))
 
-$(eval $(call BID_GENERATE_I_MAKE_RULE,%.i,%.c,$(CC),$(CFLAGS)))
+$(eval $(call BID_GENERATE_I_MAKE_RULE,%.i,%.c,$(CC),$(CFLAGS) $(call BID_mode_var,NOPICFLAGS)))
 $(eval $(call BID_GENERATE_I_MAKE_RULE,%.s.i,%.c,$(CC),$(CFLAGS) $(PICFLAGS)))
-$(eval $(call BID_GENERATE_I_MAKE_RULE,%.i,%.cc,$(CXX),$(CXXFLAGS)))
+$(eval $(call BID_GENERATE_I_MAKE_RULE,%.i,%.cc,$(CXX),$(CXXFLAGS) $(call BID_mode_var,NOPICFLAGS)))
 $(eval $(call BID_GENERATE_I_MAKE_RULE,%.s.i,%.cc,$(CXX),$(CXXFLAGS) $(PICFLAGS)))
-$(if $(BID_ALLOW_CPP_AS_CPLUSPLUS_FILE),$(eval $(call BID_GENERATE_I_MAKE_RULE,%.i,%.cpp,$(CXX),$(CXXFLAGS))))
+$(if $(BID_ALLOW_CPP_AS_CPLUSPLUS_FILE),$(eval $(call BID_GENERATE_I_MAKE_RULE,%.i,%.cpp,$(CXX),$(CXXFLAGS) $(call BID_mode_var,NOPICFLAGS))))
 $(if $(BID_ALLOW_CPP_AS_CPLUSPLUS_FILE),$(eval $(call BID_GENERATE_I_MAKE_RULE,%.s.i,%.cpp,$(CXX),$(CXXFLAGS) $(PICFLAGS))))
 $(eval $(call BID_GENERATE_I_MAKE_RULE,%.i,%.S,$(CC),$(ASFLAGS)))
 
@@ -859,15 +861,44 @@ $(if $(BID_ALLOW_CPP_AS_CPLUSPLUS_FILE),$(eval $(call BID_GENERATE_S_MAKE_RULE,%
 	@$(GEN_MESSAGE)
 	$(VERBOSE)$(call MAKEDEP,perl) $(GEN_DOPECODE) $< >$@
 
+%.dtb: %.dts $(GENERAL_D_LOC)
+	@$(BUILD_MESSAGE)
+	$(VERBOSE)$(MKDIR) $(@D)
+	$(VERBOSE)$(CPP) $(CFLAGS) $(addprefix -I, $(PRIVATE_INCDIR)) -x assembler-with-cpp -Wp,-MD,$(@D)/.$(@F).d,-MT$@,-MP -nostdinc -o $@.pre $<
+	$(VERBOSE)$(DTC) $(DTC_FLAGS) $(addprefix -i , $(PRIVATE_INCDIR)) -i $(dir $<) -d $(@D)/.$(@F).d-x -O dtb -b 0 -o $@ $@.pre
+	$(VERBOSE)$(SED) -e "s|$@.pre|$<|" $(@D)/.$(@F).d-x | \
+		perl -ne 'print "$$_\n"; if (/^.*:\s*(.*)$$/) { print "$$_:\n" foreach (split(/ /,$$1)); }' >> $(@D)/.$(@F).d
+	$(VERBOSE)$(RM) $(@D)/.$(@F).d-x $@.pre
+
+define bin_to_asm_recipe
+	echo -e ".section .rodata, \"a\"\n"    \
+	        ".global _binary_$(3)_start\n" \
+	        ".global _binary_$(3)_end\n"   \
+	        ".p2align 3\n"                 \
+	        "_binary_$(3)_start:\n"        \
+	        ".incbin \"$(1)\"\n"           \
+	        "_binary_$(3)_end:\n" >$(2)
+endef
+
+SRC_DATA_VPATH ?= $(SRC_DIR)
+$(foreach s,$(SRC_DATA),$(eval vpath $(s) $(SRC_DATA_VPATH)))
+
+$(addsuffix .bin.S,$(SRC_DATA)): %.bin.S: % $(GENERAL_D_LOC)
+	@$(GEN_MESSAGE)
+	$(VERBOSE)$(MKDIR) $(@D)
+	$(VERBOSE)$(call bin_to_asm_recipe,$<,$@,$(subst -,_,$(subst /,_,$(subst .,_,$(strip $(*F))))))
+
 DEPS	+= $(foreach file,$(ALLOBJS), $(dir $(file)).$(notdir $(file)).d)
 DEPS	+= $(foreach file,$(ALLDPI), $(dir $(file)).$(notdir $(file)).d)
+DEPS	+= $(foreach file,$(filter %.dtb, $(INSTALL_TARGET)), $(dir $(file)).$(notdir $(file)).d)
 
 # Common clean Rules
 
 clean cleanall::
 	$(VERBOSE)$(RM) $(strip $(filter-out $(KEEP_ON_CLEAN),\
 		$(wildcard *.dpi) $(wildcard *.o) $(wildcard *.i) \
-		$(wildcard *.S) $(ALLOBJS) $(DEL_ON_CLEAN)))
+		$(wildcard *.S) \
+		$(wildcard $(filter-out -%, $(ALLOBJS) $(DEL_ON_CLEAN)))))
 
 # clean: delete all temporary editor files, objects, binaries
 #        and most generated files

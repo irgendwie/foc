@@ -63,6 +63,20 @@ public:
     return v & (1UL << b);
   }
 
+  bool atomic_get_and_set(unsigned long bit)
+  {
+    unsigned long idx = bit / Bpl;
+    unsigned long b   = bit % Bpl;
+    unsigned long v;
+    do
+      {
+        v = _bits[idx];
+      }
+    while (!mp_cas(&_bits[idx], v, v | (1UL << b)));
+
+    return v & (1UL << b);
+  }
+
   void atomic_set_bit(unsigned long bit)
   {
     unsigned long idx = bit / Bpl;
@@ -95,6 +109,24 @@ public:
   {
     for (unsigned i = 0; i < Nr_elems; ++i)
       atomic_mp_or(&_bits[i], r._bits[i]);
+  }
+
+  unsigned ffs(unsigned bit) const
+  {
+    unsigned long idx = bit / Bpl;
+    unsigned long b   = bit % Bpl;
+    for (unsigned i = idx; i < Nr_elems; ++i)
+      {
+        unsigned long v = _bits[i];
+        v >>= b;
+        unsigned r = __builtin_ffsl(v);
+        if (r > 0)
+          return r + (i * Bpl) + b;
+
+        b = 0;
+      }
+
+    return 0;
   }
 
 protected:
@@ -162,6 +194,18 @@ public:
     return v & (1UL << bit);
   }
 
+  bool atomic_get_and_set(unsigned long bit)
+  {
+    unsigned long v;
+    do
+      {
+        v = _bits;
+      }
+    while (!mp_cas(&_bits, v, v | (1UL << bit)));
+
+    return v & (1UL << bit);
+  }
+
   void atomic_set_bit(unsigned long bit)
   {
     atomic_mp_or(&_bits, 1UL << bit);
@@ -187,7 +231,16 @@ public:
     atomic_mp_or(&_bits, r._bits);
   }
 
+  unsigned ffs(unsigned bit) const
+  {
+    unsigned long v = _bits;
+    v >>= bit;
+    unsigned r = __builtin_ffsl(v);
+    if (r > 0)
+      return r + bit;
 
+    return 0;
+  }
 
 protected:
   template< bool BIG, unsigned BTS > friend class Bitmap_base;

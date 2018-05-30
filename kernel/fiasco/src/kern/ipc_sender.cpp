@@ -16,9 +16,6 @@ private:
   Derived *derived() { return static_cast<Derived*>(this); }
   static bool dequeue_sender() { return true; }
   static bool requeue_sender() { return false; }
-
-public:
-  virtual ~Ipc_sender() = 0;
 };
 
 extern "C" void fast_ret_from_irq(void);
@@ -28,12 +25,10 @@ IMPLEMENTATION:
 #include "config.h"
 #include "entry_frame.h"
 #include "globals.h"
-#include "kdb_ke.h"
 #include "thread_state.h"
 #include <cassert>
 
 IMPLEMENT inline Ipc_sender_base::~Ipc_sender_base() {}
-IMPLEMENT inline template<typename D> Ipc_sender<D>::~Ipc_sender() {}
 
 PUBLIC
 virtual void
@@ -75,7 +70,7 @@ Ipc_sender_base::handle_shortcut(Syscall_frame *dst_regs,
         // also: no shortcut for alien threads, they need to see the
         // after-syscall exception
         && !(receiver->state()
-          & (Thread_ready_mask | Thread_alien))
+          & (Thread_drq_wait | Thread_ready_mask | Thread_alien))
         && !rq.schedule_in_progress))) // no schedule in progress
     {
       // we don't need to manipulate the state in a safe way
@@ -100,14 +95,9 @@ Ipc_sender_base::handle_shortcut(Syscall_frame *dst_regs,
       // XXX We must own the kernel lock for this optimization!
       //
 
-      Mword *esp = reinterpret_cast<Mword*>
-        (nonull_static_cast<Entry_frame*>(dst_regs));
-
-      // set return address of irq_thread
-      *--esp = reinterpret_cast<Mword>(fast_ret_from_irq);
-
-      // XXX set stack pointer of irq_thread
+      Mword *esp = reinterpret_cast<Mword*>(Entry_frame::to_entry_frame(dst_regs));
       receiver->set_kernel_sp(esp);
+      receiver->prepare_switch_to(fast_ret_from_irq);
 
       // directly switch to the interrupt thread context and go out
       // fast using fast_ret_from_irq (implemented in assembler).
@@ -125,7 +115,7 @@ PROTECTED template< typename Derived >
 inline  NEEDS["config.h","globals.h", "thread_state.h",
               Ipc_sender_base::handle_shortcut]
 bool
-Ipc_sender<Derived>::send_msg(Receiver *receiver, bool might_switch)
+Ipc_sender<Derived>::send_msg(Receiver *receiver, bool is_not_xcpu)
 {
   set_wait_queue(receiver->sender_list());
 
@@ -158,15 +148,28 @@ Ipc_sender<Derived>::send_msg(Receiver *receiver, bool might_switch)
       // in case a timeout was set
       receiver->reset_timeout();
 
-      auto &rq = Sched_context::rq.current();
-      if (   might_switch && s == Receiver::Rs_ipc_receive
-          && handle_shortcut(dst_regs, receiver))
-        return false;
+      if (is_not_xcpu
+          || EXPECT_TRUE(current_cpu() == receiver->home_cpu()))
+        {
+          auto &rq = Sched_context::rq.current();
+          if (s == Receiver::Rs_ipc_receive
+              && handle_shortcut(dst_regs, receiver))
+            return false;
 
+          // we don't need to manipulate the state in a safe way
+          // because we are still running with interrupts turned off
+          receiver->state_add_dirty(Thread_ready);
+          return rq.deblock(receiver->sched(), current()->sched(), false);
+        }
+
+      // receiver's CPU is offline ----------------------------------------
+      auto &rq = Sched_context::rq.cpu(receiver->home_cpu());
       // we don't need to manipulate the state in a safe way
       // because we are still running with interrupts turned off
       receiver->state_add_dirty(Thread_ready);
-      return rq.deblock(receiver->sched(), current()->sched(), false);
+      rq.deblock_refill(receiver->sched());
+      rq.ready_enqueue(receiver->sched());
+      return false;
     }
 
   if (Config::Irq_shortcut)

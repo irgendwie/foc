@@ -50,8 +50,8 @@ IMPLEMENTATION:
 #include "atomic.h"
 #include "config.h"
 #include "cpu.h"
-#include "kdb_ke.h"
 #include "kmem_alloc.h"
+#include "kmem.h"
 #include "mem_layout.h"
 
 PRIVATE  template< typename SPACE >
@@ -94,7 +94,7 @@ Obj_space_virt<SPACE>::caps_alloc(Cap_index virt)
 
   Mem_space::Status s;
   s = SPACE::mem_space(this)->v_insert(
-      Mem_space::Phys_addr(Mem_space::kernel_space()->virt_to_phys((Address)mem)),
+      Mem_space::Phys_addr(Kmem::kdir->virt_to_phys((Address)mem)),
       cxx::mask_lsb(Virt_addr(cv), Mem_space::Page_order(Config::PAGE_SHIFT)),
       Mem_space::Page_order(Config::PAGE_SHIFT),
       Mem_space::Attr(L4_fpage::Rights::RW()));
@@ -115,7 +115,7 @@ Obj_space_virt<SPACE>::caps_alloc(Cap_index virt)
       return 0;
     };
 
-  unsigned long cap = cv & (Config::PAGE_SIZE - 1) | (unsigned long)mem;
+  unsigned long cap = (cv & (Config::PAGE_SIZE - 1)) | (unsigned long)mem;
 
   return reinterpret_cast<Entry*>(cap);
 }
@@ -134,14 +134,11 @@ Obj_space_virt<SPACE>::caps_free()
     {
       Entry *c = get_cap(i);
       if (!c)
-	continue;
+        continue;
 
-      Address cp = Address(ms->virt_to_phys(Address(c)));
-      assert_kdb (cp != ~0UL);
-      void *cv = (void*)Mem_layout::phys_to_pmem(cp);
-      Obj::remove_cap_page_dbg_info(cv);
+      Obj::remove_cap_page_dbg_info(c);
 
-      a->q_unaligned_free(SPACE::ram_quota(this), Config::PAGE_SIZE, cv);
+      a->q_unaligned_free(SPACE::ram_quota(this), Config::PAGE_SIZE, c);
     }
   ms->dir()->destroy(Virt_addr(Mem_layout::Caps_start),
                      Virt_addr(Mem_layout::Caps_end-1),
@@ -263,7 +260,7 @@ Obj_space_virt<SPACE>::v_delete(V_pfn virt, Order size,
 
 IMPLEMENT  template< typename SPACE >
 inline NEEDS[Obj_space_virt::cap_virt, Obj_space_virt::caps_alloc,
-             Obj_space_virt::get_cap, "kdb_ke.h"]
+             Obj_space_virt::get_cap, <cassert>]
 typename Obj::Insert_result FIASCO_FLATTEN
 Obj_space_virt<SPACE>::v_insert(Phys_addr phys, V_pfn const &virt, Order size,
                                 Attr page_attribs)

@@ -1,7 +1,7 @@
 #include "support.h"
 #include "startup.h"
 
-#include <l4/drivers/uart_pxa.h>
+#include <l4/drivers/uart_16550.h>
 #include <l4/drivers/io_regblock_port.h>
 
 #include <string.h>
@@ -276,10 +276,12 @@ struct Pci_iterator
 
   unsigned vendor() const { return vd & 0xffff; }
   unsigned device() const { return vd >> 16; }
+  unsigned vendor_device() const { return vd; }
 
   unsigned classcode() const { return pci_read(0x0b, 8); }
   unsigned subclass()  const { return pci_read(0x0a, 8); }
   unsigned prog() const { return pci_read(9, 8); }
+  unsigned pci_class() const { return pci_read(0x08, 32) >> 8; }
 
   bool operator == (Pci_iterator const &o) const
   { return bus == o.bus && dev == o.dev && func == o.func; }
@@ -348,7 +350,7 @@ struct Bs_uart : L4::Uart_16550
   Regs uart_regs;
 
   Bs_uart(Serial_board *board, unsigned port, unsigned long baudrate)
-  : L4::Uart_16550(board->base_baud), ok(false)
+  : L4::Uart_16550(board->base_baud, 0, 0, 0x8 /* out2 */, 0), ok(false)
   {
     type = board->get_type();
     if (type == Resource::IO_BAR)
@@ -510,13 +512,6 @@ struct Pci_com_drv_default : Pci_com_drv
 {
   bool setup(Pci_iterator const &dev, Serial_board *board) const
   {
-    // The default drivers only takes 7:80 typed devices
-    if (dev.classcode() != 7)
-      return false;
-
-    if (dev.subclass() != 0x80)
-      return false;
-
     read_bars(dev, board);
     int num_iobars = board->num_io_bars();
 
@@ -538,6 +533,21 @@ struct Pci_com_drv_default : Pci_com_drv
            first_port, board->num_ports);
     dev.enable_io();
     return true;
+  }
+};
+
+struct Pci_com_drv_fallback : Pci_com_drv_default
+{
+  bool setup(Pci_iterator const &dev, Serial_board *board) const
+  {
+    // The default drivers only takes 7:80 typed devices
+    if (dev.classcode() != 7)
+      return false;
+
+    if (dev.subclass() != 0x80)
+      return false;
+
+    return Pci_com_drv_default::setup(dev, board);
   }
 };
 
@@ -596,22 +606,50 @@ struct Pci_com_moschip : public Pci_com_drv
 
 };
 
+struct Pci_com_wch_chip : public Pci_com_drv
+{
+  bool setup(Pci_iterator const &dev, Serial_board *board) const
+  {
+    read_bars(dev, board);
+
+    board->port_offset = 8;
+    board->base_baud = L4::Uart_16550::Base_rate_x86;
+    board->base_bar = board->first_io_bar();
+    board->num_ports = 2;
+    board->base_offset = 0xc0;
+    board->flags = 0;
+    printf("   detected serial IO card: bar=%d ports=%d\n",
+           board->base_bar, board->num_ports);
+    dev.enable_io();
+    return true;
+  }
+};
+
+static Pci_com_drv_fallback _fallback_pci_com;
 static Pci_com_drv_default _default_pci_com;
 static Pci_com_drv_oxsemi _oxsemi_pci_com;
 static Pci_com_moschip _moschip;
+static Pci_com_wch_chip _wch_chip;
+
+#define PCI_DEVICE_ID(vendor, device) \
+  (((unsigned)(device) << 16) | (unsigned)(vendor & 0xffff)), 0xffffffffU
+#define PCI_ANY_DEVICE 0, 0
 
 struct Pci_com_dev
 {
-  unsigned vendor;
-  unsigned device;
+  unsigned vendor_device;
   unsigned mask;
   Pci_com_drv *driver;
 };
 
 Pci_com_dev _devs[] = {
-  { 0x1415, 0xc158, 0xffff, &_oxsemi_pci_com },
-  { 0x9710, 0x9835, 0xffff, &_moschip },
-  { 0x0000, 0x0000, 0x0000, &_default_pci_com },
+  { PCI_DEVICE_ID(0x1415, 0xc158), &_oxsemi_pci_com },
+  { PCI_DEVICE_ID(0x9710, 0x9835), &_moschip },
+  { PCI_DEVICE_ID(0x9710, 0x9865), &_moschip },
+  { PCI_DEVICE_ID(0x9710, 0x9922), &_moschip },
+  { PCI_DEVICE_ID(0x1c00, 0x3253), &_wch_chip }, // dual port card
+  { PCI_DEVICE_ID(0x8086, 0x8c3d), &_default_pci_com },
+  { PCI_ANY_DEVICE, &_fallback_pci_com },
 };
 
 enum { Num_known_devs = sizeof(_devs) / sizeof(_devs[0]) };
@@ -629,10 +667,9 @@ _search_pci_serial_devs(Pci_iterator const &begin, Pci_iterator const &end,
                i.vendor(), i.device());
 
       for (unsigned devs = 0; devs < Num_known_devs; ++devs)
-        if (   (i.vendor() & _devs[devs].mask) == _devs[devs].vendor
-            && (i.device() & _devs[devs].mask) == _devs[devs].device)
-          if (_devs[devs].driver->setup(i, board))
-            return i;
+        if (   (i.vendor_device() & _devs[devs].mask) == _devs[devs].vendor_device
+            && _devs[devs].driver->setup(i, board))
+          return i;
     }
 
   return end;
@@ -760,7 +797,7 @@ class Platform_x86 : public Platform_base
 {
 public:
 #ifdef ARCH_amd64
-  ptab64_mem_info_t const *ptab64_info;
+  boot32_info_t const *boot32_info;
 #endif
   bool probe() { return true; }
 
@@ -809,8 +846,47 @@ public:
     return 0;
   }
 
+  static unsigned cpuid_features()
+  {
+    unsigned ver, brand, ext_feat, feat;
+
+    asm("cpuid"
+	: "=a" (ver), "=b" (brand), "=c" (ext_feat), "=d" (feat)
+	: "a" (1));
+
+    return feat;
+  }
+
+  /* To use esp. library code in bootstrap, we enable the FPU
+   * so that FPU usage by those libs is possible */
   void init()
-  {};
+  {
+    unsigned long tmp;
+
+    /* Enable CR4_OSXSAVE if SSE2 is available */
+    if (cpuid_features() & (1 << 26))
+      asm volatile("mov %%cr4, %0      \n\t"
+                   "or  $(1 << 9), %0  \n\t"
+                   "mov %0, %%cr4      \n\t"
+                   : "=r" (tmp));
+  }
+
+  void boot_kernel(unsigned long entry)
+  {
+    unsigned long tmp;
+
+    /* Disable CR4_OSXSAVE if SSE2 is available */
+    if (cpuid_features() & (1 << 26))
+      asm volatile("mov %%cr4, %0      \n\t"
+                   "and $~(1 << 9), %0 \n\t"
+                   "mov %0, %%cr4      \n\t"
+                   : "=r" (tmp));
+
+
+    typedef void (*func)(void);
+    ((func)entry)();
+    exit(-100);
+  }
 
   void setup_uart(char const *cmdline)
   {
@@ -872,7 +948,10 @@ public:
           }
 
         if (init_uart(&board, comport, comirq, &du))
-          printf("UART init failed\n");
+          {
+            kuart_flags |= L4_kernel_options::F_noserial;
+            printf("UART init failed\n");
+          }
       }
     else
       kuart_flags |= L4_kernel_options::F_noserial;

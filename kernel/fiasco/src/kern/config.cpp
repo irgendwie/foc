@@ -10,24 +10,22 @@ INTERFACE:
 
 // special magic to allow old compilers to inline constants
 
-#define STRINGIFY_(x) #x
-#define STRINGIFY(x) STRINGIFY_(x)
-
+#if defined(__clang__)
+# define COMPILER "clang " __clang_version__
+# define GCC_VERSION 409
+#else
 #if defined(__GNUC__)
-# if defined(__GNUC_PATCHLEVEL__)
-#  define COMPILER STRINGIFY(__GNUC__) "." STRINGIFY(__GNUC_MINOR__) "." STRINGIFY(__GNUC_PATCHLEVEL__)
-# else
-#  define COMPILER STRINGIFY(__GNUC__) "." STRINGIFY(__GNUC_MINOR__)
-# endif
+# define COMPILER "gcc " __VERSION__
 # define GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
 #else
 # define COMPILER "Non-GCC"
 # define GCC_VERSION 0
 #endif
+#endif
 
 #define GREETING_COLOR_ANSI_OFF    "\033[0m"
 
-#define FIASCO_KERNEL_SUBVERSION 2
+#define FIASCO_KERNEL_SUBVERSION 3
 
 class Config
 {
@@ -122,34 +120,24 @@ public:
 #define GREETING_COLOR_ANSI_TITLE  "\033[1;32m"
 #define GREETING_COLOR_ANSI_INFO   "\033[0;32m"
 
-INTERFACE[ia32,ux]:
-#define ARCH_NAME "ia32"
-#define TARGET_NAME CONFIG_IA32_TARGET
+INTERFACE[ia32]:
+#define TARGET_NAME "x86-32"
 
-INTERFACE[arm]:
-#define ARCH_NAME "arm"
+INTERFACE[ux]:
+#define TARGET_NAME "ux-x86-32"
 
 INTERFACE[amd64]:
-#define ARCH_NAME "amd64"
-#define TARGET_NAME CONFIG_IA32_TARGET
-
-INTERFACE[ppc32]:
-#define ARCH_NAME "ppc32"
-
-INTERFACE[sparc]:
-#define ARCH_NAME "sparc"
-#define TARGET_NAME ""
+#define TARGET_NAME "x86-64"
 
 INTERFACE:
+
 #define CONFIG_KERNEL_VERSION_STRING \
-  GREETING_COLOR_ANSI_TITLE "Welcome to Fiasco.OC (" CONFIG_XARCH ")!\\n"            \
-  GREETING_COLOR_ANSI_INFO "L4/Fiasco.OC " ARCH_NAME " "                \
-                           "microkernel (C) 1998-2013 TU Dresden\\n"           \
-                           "Rev: " CODE_VERSION " compiled with gcc " COMPILER \
-                            " for " TARGET_NAME "    [" CONFIG_LABEL "]\\n"    \
+  GREETING_COLOR_ANSI_TITLE "Welcome to L4/Fiasco.OC!\\n"                      \
+  GREETING_COLOR_ANSI_INFO "L4/Fiasco.OC microkernel on " CONFIG_XARCH "\\n"      \
+                           "Rev: " CODE_VERSION " compiled with " COMPILER \
+                           TARGET_NAME_PHRASE "    [" CONFIG_LABEL "]\\n"    \
                            "Build: #" BUILD_NR " " BUILD_DATE "\\n"            \
   GREETING_COLOR_ANSI_OFF
-
 
 //---------------------------------------------------------------------------
 INTERFACE [ux]:
@@ -157,7 +145,7 @@ INTERFACE [ux]:
 EXTENSION class Config
 {
 public:
-  // 32MB RAM => 2.5MB kmem, 128MB RAM => 16MB kmem, >=512MB RAM => 64MB kmem
+  // 8 percent of total RAM, >=800MB RAM => 64MB kmem
   static const unsigned kernel_mem_per_cent = 8;
   enum
   {
@@ -171,7 +159,7 @@ INTERFACE [!ux && !64bit]:
 EXTENSION class Config
 {
 public:
-  // 32MB RAM => 2.5MB kmem, 128MB RAM => 16MB kmem, >=512MB RAM => 60MB kmem
+  // 8 percent of total RAM, >=750MB RAM => 60MB kmem
   static const unsigned kernel_mem_per_cent = 8;
   enum
   {
@@ -185,7 +173,7 @@ INTERFACE [!ux && 64bit]:
 EXTENSION class Config
 {
 public:
-  // 32MB RAM => 2.5MB kmem, 128MB RAM => 16MB kmem, >=512MB RAM => 60MB kmem
+  // 6 percent of total RAM, >=17066MB RAM => 1024MB kmem
   static const unsigned kernel_mem_per_cent = 6;
   enum
   {
@@ -231,8 +219,9 @@ IMPLEMENTATION:
 #include "initcalls.h"
 #include "koptions.h"
 #include "panic.h"
+#include "std_macros.h"
 
-KIP_KERNEL_ABI_VERSION(STRINGIFY(FIASCO_KERNEL_SUBVERSION));
+KIP_KERNEL_ABI_VERSION(FIASCO_STRINGIFY(FIASCO_KERNEL_SUBVERSION));
 
 // class variables
 bool Config::esc_hack = false;

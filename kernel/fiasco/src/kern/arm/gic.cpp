@@ -3,6 +3,7 @@ INTERFACE [arm && pic_gic]:
 #include "kmem.h"
 #include "irq_chip_generic.h"
 #include "mmio_register_block.h"
+#include "spin_lock.h"
 
 
 class Gic : public Irq_chip_gen
@@ -10,6 +11,8 @@ class Gic : public Irq_chip_gen
 private:
   Mmio_register_block _cpu;
   Mmio_register_block _dist;
+
+  Spin_lock<> _lock;
 
 public:
   enum
@@ -52,6 +55,7 @@ public:
     Cpu_prio_val      = 0xf0,
   };
 
+  Unsigned32 pcpu_to_sgi(Cpu_phys_id);
 };
 
 // ------------------------------------------------------------------------
@@ -91,26 +95,62 @@ IMPLEMENTATION [arm && pic_gic]:
 PUBLIC inline NEEDS["io.h"]
 unsigned
 Gic::hw_nr_irqs()
-{ return ((_dist.read<Mword>(GICD_TYPER) & 0x1f) + 1) * 32; }
+{ return ((_dist.read<Unsigned32>(GICD_TYPER) & 0x1f) + 1) * 32; }
 
 PUBLIC inline NEEDS["io.h"]
 bool
 Gic::has_sec_ext()
-{ return _dist.read<Mword>(GICD_TYPER) & (1 << 10); }
+{ return _dist.read<Unsigned32>(GICD_TYPER) & (1 << 10); }
+
+IMPLEMENT_DEFAULT inline
+Unsigned32 Gic::pcpu_to_sgi(Cpu_phys_id cpu)
+{ return cxx::int_value<Cpu_phys_id>(cpu); }
 
 PUBLIC inline
 void Gic::softint_cpu(unsigned callmap, unsigned m)
 {
-  _dist.write<Mword>(((callmap & 0xff) << 16) | m, GICD_SGIR);
+  _dist.write<Unsigned32>(((callmap & 0xff) << 16) | m, GICD_SGIR);
 }
 
 PUBLIC inline
 void Gic::softint_bcast(unsigned m)
-{ _dist.write<Mword>((1 << 24) | m, GICD_SGIR); }
+{ _dist.write<Unsigned32>((1 << 24) | m, GICD_SGIR); }
 
 PUBLIC inline
 void Gic::pmr(unsigned prio)
-{ _cpu.write<Mword>(prio, GICC_PMR); }
+{ _cpu.write<Unsigned32>(prio, GICC_PMR); }
+
+PRIVATE inline
+void Gic::gicc_enable()
+{
+  _cpu.write<Unsigned32>(GICC_CTRL_ENABLE | (Config_tz_sec ? GICC_CTRL_FIQEn : 0),
+                         GICC_CTRL);
+  pmr(Cpu_prio_val);
+}
+
+PRIVATE inline
+void Gic::gicd_enable()
+{
+  Unsigned32 dist_enable = GICD_CTRL_ENABLE;
+  if (Config_mxc_tzic && !Config_tz_sec)
+    dist_enable |= MXC_TZIC_CTRL_NSEN | MXC_TZIC_CTRL_NSENMASK;
+
+  _dist.write<Unsigned32>(dist_enable, GICD_CTRL);
+}
+
+PRIVATE inline
+void Gic::gicd_init_prio(unsigned from, unsigned to)
+{
+  for (unsigned i = from; i < to; i += 4)
+    _dist.write<Unsigned32>(0xa0a0a0a0, GICD_IPRIORITYR + i);
+}
+
+PRIVATE inline
+void Gic::gicd_init_regs(unsigned from, unsigned to)
+{
+  for (unsigned i = from; i < to; i += 32)
+    _dist.write<Unsigned32>(0xffffffff, GICD_ICENABLER + i * 4 / 32);
+}
 
 PRIVATE
 void
@@ -121,30 +161,30 @@ Gic::cpu_init(bool resume)
   if (Config_tz_sec)
     sec_irqs = 0x00000f00;
 
-  _cpu.write<Mword>(0, GICC_CTRL);
+  _cpu.write<Unsigned32>(0, GICC_CTRL);
 
   if (!resume)
     {
       // do not touch the distrubutor on cpu resume
-      _dist.write<Mword>(0xffffffff, GICD_ICENABLER);
+      _dist.write<Unsigned32>(0xffffffff, GICD_ICENABLER);
       if (Config_tz_sec)
         {
-          _dist.write<Mword>(0x00000f00, GICD_ISENABLER);
-          _dist.write<Mword>(~sec_irqs, GICD_IGROUPR);
+          _dist.write<Unsigned32>(0x00000f00, GICD_ISENABLER);
+          _dist.write<Unsigned32>(~sec_irqs, GICD_IGROUPR);
         }
       else
         {
-          _dist.write<Mword>(0x0000001e, GICD_ISENABLER);
-          _dist.write<Mword>(0, GICD_IGROUPR);
+          _dist.write<Unsigned32>(0x0000001e, GICD_ISENABLER);
+          _dist.write<Unsigned32>(0, GICD_IGROUPR);
         }
 
-      _dist.write<Mword>(0xffffffff, GICD_ICPENDR);
+      _dist.write<Unsigned32>(0xffffffff, GICD_ICPENDR);
 
-      _dist.write<Mword>(0xffffffff, 0x380); // clear active
-      _dist.write<Mword>(0xffffffff, 0xf10); // sgi pending clear
-      _dist.write<Mword>(0xffffffff, 0xf14); // sgi pending clear
-      _dist.write<Mword>(0xffffffff, 0xf18); // sgi pending clear
-      _dist.write<Mword>(0xffffffff, 0xf1c); // sgi pending clear
+      _dist.write<Unsigned32>(0xffffffff, 0x380); // clear active
+      _dist.write<Unsigned32>(0xffffffff, 0xf10); // sgi pending clear
+      _dist.write<Unsigned32>(0xffffffff, 0xf14); // sgi pending clear
+      _dist.write<Unsigned32>(0xffffffff, 0xf18); // sgi pending clear
+      _dist.write<Unsigned32>(0xffffffff, 0xf1c); // sgi pending clear
 
       for (unsigned g = 0; g < 32; g += 4)
         {
@@ -162,13 +202,15 @@ Gic::cpu_init(bool resume)
           else
             v = 0xa0a0a0a0;
 
-          _dist.write<Mword>(v, GICD_IPRIORITYR + g);
+          _dist.write<Unsigned32>(v, GICD_IPRIORITYR + g);
         }
     }
 
-  _cpu.write<Mword>(GICC_CTRL_ENABLE | (Config_tz_sec ? GICC_CTRL_FIQEn : 0),
-                    GICC_CTRL);
-  pmr(Cpu_prio_val);
+
+  gicc_enable();
+
+  // Ensure BSPs have provided a mapping for the CPUTargetList
+  assert(pcpu_to_sgi(Proc::cpu_id()) < 8);
 }
 
 PUBLIC
@@ -182,13 +224,15 @@ PUBLIC
 unsigned
 Gic::init(bool primary_gic, int nr_irqs_override = -1)
 {
+  _lock.init();
+
   if (!primary_gic)
     {
       cpu_init(false);
       return 0;
     }
 
-  _dist.write<Mword>(0, GICD_CTRL);
+  _dist.write<Unsigned32>(0, GICD_CTRL);
 
   unsigned num = hw_nr_irqs();
   if (nr_irqs_override != -1)
@@ -196,42 +240,36 @@ Gic::init(bool primary_gic, int nr_irqs_override = -1)
 
   if (!Config_mxc_tzic)
     {
-      unsigned int intmask = 1U << cxx::int_value<Cpu_phys_id>(Proc::cpu_id());
+      unsigned int intmask = 1U << pcpu_to_sgi(Proc::cpu_id());
       intmask |= intmask << 8;
       intmask |= intmask << 16;
 
       for (unsigned i = 32; i < num; i += 16)
-        _dist.write<Mword>(0, GICD_ICFGR + i * 4 / 16);
+        _dist.write<Unsigned32>(0, GICD_ICFGR + i * 4 / 16);
       for (unsigned i = 32; i < num; i += 4)
-        _dist.write<Mword>(intmask, GICD_ITARGETSR + i);
+        _dist.write<Unsigned32>(intmask, GICD_ITARGETSR + i);
     }
 
-  for (unsigned i = 32; i < num; i += 4)
-    _dist.write<Mword>(0xa0a0a0a0, GICD_IPRIORITYR + i);
+  gicd_init_prio(32, num);
 
-  for (unsigned i = 32; i < num; i += 32)
-    _dist.write<Mword>(0xffffffff, GICD_ICENABLER + i * 4 / 32);
+  gicd_init_regs(32, num);
 
   Mword v = 0;
   if (Config_tz_sec || Config_mxc_tzic)
     v = 0xffffffff;
 
   for (unsigned i = 32; i < num; i += 32)
-    _dist.write<Mword>(v, GICD_IGROUPR + i / 8);
-
-  Mword dist_enable = GICD_CTRL_ENABLE;
-  if (Config_mxc_tzic && !Config_tz_sec)
-    dist_enable |= MXC_TZIC_CTRL_NSEN | MXC_TZIC_CTRL_NSENMASK;
+    _dist.write<Unsigned32>(v, GICD_IGROUPR + i / 8);
 
   for (unsigned i = 0; i < num; ++i)
     set_cpu(i, Cpu_number(0));
 
-  _dist.write<Mword>(dist_enable, GICD_CTRL);
+  gicd_enable();
 
   if (Config_mxc_tzic)
     {
-      _dist.write<Mword>(0x0, MXC_TZIC_SYNCCTRL);
-      _dist.write<Mword>(Cpu_prio_val, MXC_TZIC_PRIOMASK);
+      _dist.write<Unsigned32>(0x0, MXC_TZIC_SYNCCTRL);
+      _dist.write<Unsigned32>(Cpu_prio_val, MXC_TZIC_PRIOMASK);
     }
   else
     cpu_init(false);
@@ -263,17 +301,17 @@ Gic::Gic(Address cpu_base, Address dist_base, Gic *master_mapping)
 
 PUBLIC inline NEEDS["io.h"]
 void Gic::disable_locked( unsigned irq )
-{ _dist.write<Mword>(1 << (irq % 32), GICD_ICENABLER + (irq / 32) * 4); }
+{ _dist.write<Unsigned32>(1 << (irq % 32), GICD_ICENABLER + (irq / 32) * 4); }
 
 PUBLIC inline NEEDS["io.h"]
 void Gic::enable_locked(unsigned irq, unsigned /*prio*/)
-{ _dist.write<Mword>(1 << (irq % 32), GICD_ISENABLER + (irq / 32) * 4); }
+{ _dist.write<Unsigned32>(1 << (irq % 32), GICD_ISENABLER + (irq / 32) * 4); }
 
 PUBLIC inline
 void Gic::acknowledge_locked(unsigned irq)
 {
   if (!Config_mxc_tzic)
-    _cpu.write<Mword>(irq, GICC_EOIR);
+    _cpu.write<Unsigned32>(irq, GICC_EOIR);
 }
 
 PUBLIC
@@ -339,7 +377,9 @@ Gic::set_mode(Mword pin, Mode m)
     };
 
   unsigned shift = (pin & 15) * 2;
-  _dist.modify<Mword>(v << shift, 3 << shift, GICD_ICFGR + (pin >> 4) * 4);
+
+  auto guard = lock_guard(_lock);
+  _dist.modify<Unsigned32>(v << shift, 3 << shift, GICD_ICFGR + (pin >> 4) * 4);
 
   return 0;
 }
@@ -351,7 +391,7 @@ Gic::is_edge_triggered(Mword pin) const
   if (pin < 16)
     return false;
 
-  Mword v = _dist.read<Mword>(GICD_ICFGR + (pin >> 4) * 4);
+  Unsigned32 v = _dist.read<Unsigned32>(GICD_ICFGR + (pin >> 4) * 4);
   return (v >> ((pin & 15) * 2)) & 2;
 }
 
@@ -402,10 +442,10 @@ Gic::alloc(Irq_base *irq, Mword pin)
 
       unsigned shift = (pin & 3) * 8;
 
-      _dist.clear<Mword>(1UL << (pin & 0x1f),
+      _dist.clear<Unsigned32>(1UL << (pin & 0x1f),
                          GICD_IGROUPR + (pin & ~0x1f) / 8);
 
-      _dist.modify<Mword>(0x40 << shift, 0xff << shift, GICD_IPRIORITYR + (pin & ~3));
+      _dist.modify<Unsigned32>(0x40 << shift, 0xff << shift, GICD_IPRIORITYR + (pin & ~3));
 
       return true;
     }
@@ -419,8 +459,8 @@ Gic::set_pending_irq(unsigned idx, Unsigned32 val)
   if (idx < 32)
     {
       Address o = idx * 4;
-      Mword v = val & _dist.read<Mword>(o + GICD_IGROUPR);
-      _dist.write<Mword>(v, o + GICD_ISPENDR);
+      Unsigned32 v = val & _dist.read<Unsigned32>(o + GICD_IGROUPR);
+      _dist.write<Unsigned32>(v, o + GICD_ISPENDR);
     }
 }
 
@@ -440,14 +480,14 @@ Unsigned32 Gic::pending()
       Address a = MXC_TZIC_PND;
       for (unsigned g = 0; g < 128; g += 32, a += 4)
         {
-          Mword v = _dist.read<Mword>(a);
+          Unsigned32 v = _dist.read<Unsigned32>(a);
           if (v)
             return g + 31 - __builtin_clz(v);
         }
       return 0;
     }
 
-  return _cpu.read<Mword>(GICC_IAR) & 0x3ff;
+  return _cpu.read<Unsigned32>(GICC_IAR) & 0x3ff;
 }
 
 //-------------------------------------------------------------------
@@ -458,11 +498,11 @@ IMPLEMENTATION [arm && mp && pic_gic]:
 PUBLIC inline NEEDS["io.h"]
 Unsigned32 Gic::pending()
 {
-  Unsigned32 ack = _cpu.read<Mword>(GICC_IAR);
+  Unsigned32 ack = _cpu.read<Unsigned32>(GICC_IAR);
 
   // IPIs/SGIs need to take the whole ack value
   if ((ack & 0x3ff) < 16)
-    _cpu.write<Mword>(ack, GICC_EOIR);
+    _cpu.write<Unsigned32>(ack, GICC_EOIR);
 
   return ack & 0x3ff;
 }
@@ -471,14 +511,8 @@ PUBLIC inline NEEDS["cpu.h"]
 void
 Gic::set_cpu(Mword pin, Cpu_number cpu)
 {
-  Mword reg = GICD_ITARGETSR + (pin & ~3);
-  Mword val = _dist.read<Mword>(reg);
-
-  int shift = (pin % 4) * 8;
-  unsigned pcpu = cxx::int_value<Cpu_phys_id>(Cpu::cpus.cpu(cpu).phys_id());
-  val = (val & ~(0xf << shift)) | (1 << (pcpu + shift));
-
-  _dist.write<Mword>(val, reg);
+  _dist.write<Unsigned8>(1 << pcpu_to_sgi(Cpu::cpus.cpu(cpu).phys_id()),
+                         GICD_ITARGETSR + pin);
 }
 
 //---------------------------------------------------------------------------
@@ -488,23 +522,20 @@ PUBLIC
 void
 Gic::irq_prio(unsigned irq, unsigned prio)
 {
-  _dist.modify<Mword>(prio << ((irq & 3) * 8),
-                      0xff << ((irq & 3) * 8),
-                      GICD_IPRIORITYR + (irq >> 2) * 4);
+  _dist.write<Unsigned8>(prio, GICD_IPRIORITYR + irq);
 }
 
 PUBLIC
 unsigned
 Gic::irq_prio(unsigned irq)
 {
-  return (_dist.read<Mword>(GICD_IPRIORITYR + (irq >> 2) * 4)
-          >> ((irq & 3) * 8)) & 0xff;
+  return _dist.read<Unsigned8>(GICD_IPRIORITYR + irq);
 }
 
 PUBLIC
 unsigned
 Gic::pmr()
-{ return _cpu.read<Mword>(GICC_PMR); }
+{ return _cpu.read<Unsigned32>(GICC_PMR); }
 
 PUBLIC
 char const *

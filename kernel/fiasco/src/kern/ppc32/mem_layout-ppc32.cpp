@@ -29,7 +29,6 @@ public:
     Caps_start           = 0xf5000000,
     Caps_end             = 0xfd000000,
     Kernel_image         = 0xfd000000,
-    Kernel_max           = 0x00000000,
   };
 
   static Address Tbuf_buffer_area;
@@ -85,20 +84,10 @@ T
 Mem_layout::read_special_safe(T const *a)
 {
   Mword res;
-  asm volatile( "lwz %0, 0(%1)\n"
- 		: "=r"(res) : "r"(a));
+  asm volatile("lwz %0, 0(%1)\n"
+               : "=r"(res) : "r"(a));
   return T(res);
 }
-
-
-/* no page faults can occur, return true */
-PUBLIC static inline
-bool
-Mem_layout::is_special_mapped(void const * /*a*/)
-{
-  return true;
-}
-
 
 IMPLEMENTATION [ppc32 && debug]:
 

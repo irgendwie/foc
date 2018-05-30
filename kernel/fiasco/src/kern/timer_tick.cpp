@@ -58,17 +58,20 @@ IMPLEMENTATION:
 
 #include "timer.h"
 
+#include "kdb_ke.h"
 #include "kernel_console.h"
 #include "vkey.h"
 
-PRIVATE static inline NEEDS["thread.h", "timer.h", "kernel_console.h", "vkey.h"]
+PRIVATE static inline NEEDS["thread.h", "timer.h", "kdb_ke.h",
+                            "kernel_console.h", "vkey.h"]
 void
 Timer_tick::handle_timer(Irq_base *_s, Upstream_irq const *ui,
                          Thread *t, Cpu_number cpu)
 {
   Timer_tick *self = nonull_static_cast<Timer_tick *>(_s);
   self->ack();
-  ui->ack();
+  if (ui)
+    ui->ack();
   Timer::update_system_clock(cpu);
   if (Config::esc_hack && cpu == Cpu_number::boot_cpu())
     {

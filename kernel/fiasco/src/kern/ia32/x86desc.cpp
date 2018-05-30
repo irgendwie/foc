@@ -32,13 +32,17 @@ public:
     Size_32             = 0x04,
   };
 
-  Unsigned16   limit_low;
-  Unsigned16   base_low;
-  Unsigned8    base_med;
-  Unsigned8    access;
-  Unsigned8    limit_high;
-  Unsigned8    base_high;
-
+  union {
+    struct {
+      Unsigned16   limit_low;
+      Unsigned16   base_low;
+      Unsigned8    base_med;
+      Unsigned8    access;
+      Unsigned8    limit_high;
+      Unsigned8    base_high;
+    };
+    Unsigned64 raw;
+  };
 
 } __attribute__((packed));
 
@@ -46,11 +50,16 @@ public:
 class Idt_entry : public X86desc
 {
 private:
-  Unsigned16 _offset_low;
-  Unsigned16 _selector;
-  Unsigned8  _ist;
-  Unsigned8  _access;
-  Unsigned16 _offset_high;
+  union {
+    struct {
+      Unsigned16 _offset_low;
+      Unsigned16 _selector;
+      Unsigned8  _ist;
+      Unsigned8  _access;
+      Unsigned16 _offset_high;
+    };
+    Unsigned64 _raw;
+  };
 } __attribute__((packed));
 
 
@@ -219,7 +228,7 @@ Gdt_entry::show() const
          b, b + size(), (access & 0x60) >> 5,
          modes[mode()],
          access & 0x10 ? "code/data" : "system   ",
-         access & 0x1f, type_str());
+         (unsigned)access & 0x1f, type_str());
 }
 
 PUBLIC inline
@@ -236,14 +245,14 @@ Idt_entry::show() const
       // Task gate
 
       printf("--------  sel=%04x dpl=%d %02X (\033[33;1m%s\033[m)\n",
-             selector(), dpl(), type(), type_str());
+             selector(), dpl(), (unsigned)type(), type_str());
     }
   else
     {
       Address o = offset();
 
       printf("%016lx  sel=%04x dpl=%d %02X (\033[33;1m%s\033[m)\n",
-             o, selector(), dpl(), type(), type_str());
+             o, selector(), dpl(), (unsigned)type(), type_str());
     }
 }
 
@@ -262,13 +271,11 @@ X86desc::show() const
   else
     {
       printf("--------  dpl=%d %02X (\033[33;1m%s\033[m)\n",
-	  dpl(), type(), type_str());
+	  dpl(), (unsigned)type(), type_str());
     }
 }
 
 IMPLEMENTATION:
-
-#include <cstring>
 
 PUBLIC inline
 X86desc::X86desc()
@@ -330,10 +337,10 @@ Unsigned16
 Pseudo_descriptor::limit() const
 { return _limit; }
 
-PUBLIC inline NEEDS [<cstring>]
+PUBLIC inline
 void
 Idt_entry::clear()
-{ memset(this, 0, sizeof(*this)); }
+{ _raw = 0; }
 
 PUBLIC inline
 Gdt_entry::Gdt_entry(Address base, Unsigned32 limit,
@@ -417,6 +424,5 @@ PUBLIC inline
 void
 Gdt_entry::clear()
 {
-  *(Unsigned64*)this = 0;
+  raw = 0;
 }
-

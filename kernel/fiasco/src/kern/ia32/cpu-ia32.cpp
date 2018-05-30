@@ -113,6 +113,8 @@ private:
   Unsigned32 _monitor_mwait_ecx;
   Unsigned32 _monitor_mwait_edx;
 
+  Unsigned32 _thermal_and_pm_eax;
+
   Unsigned32 scaler_tsc_to_ns;
   Unsigned32 scaler_tsc_to_us;
   Unsigned32 scaler_ns_to_tsc;
@@ -233,7 +235,7 @@ class Gdt;
 class Tss;
 
 
-EXTENSION class Cpu 
+EXTENSION class Cpu
 {
 public:
   enum Lbr
@@ -803,7 +805,7 @@ Cpu::cache_tlb_intel()
 		}
 	    }
 	}
-    } 
+    }
   while (++count < *desc);
 }
 
@@ -989,6 +991,8 @@ Cpu::identify()
 
     _vendor = (Cpu::Vendor)i;
 
+    init_indirect_branch_mitigation();
+
     switch (max)
       {
       default:
@@ -997,9 +1001,11 @@ Cpu::identify()
         cpuid(10, &_arch_perfmon_info_eax,
                   &_arch_perfmon_info_ebx,
                   &_arch_perfmon_info_ecx, &i);
+        // FALLTHRU
       case 2:
         if (_vendor == Vendor_intel)
           cache_tlb_intel();
+        // FALLTHRU
       case 1:
         update_features_info();
       }
@@ -1007,6 +1013,15 @@ Cpu::identify()
     if (max >= 5 && has_monitor_mwait())
       cpuid(5, &_monitor_mwait_eax, &_monitor_mwait_ebx,
                &_monitor_mwait_ecx, &_monitor_mwait_edx);
+
+    _thermal_and_pm_eax = 0;
+    if (max >= 6 && _vendor == Vendor_intel)
+      {
+        Unsigned32 dummy;
+        cpuid(6, &_thermal_and_pm_eax, &dummy, &dummy, &dummy);
+      }
+
+    try_enable_hw_performance_states(false);
 
     if (max >= 7 && _vendor == Vendor_intel)
       {
@@ -1055,17 +1070,20 @@ Cpu::identify()
 	switch (max)
 	  {
 	  default:
-	    // All cases fall through!
+	    // FALLTHRU
 	  case 0x80000008:
 	    if (_vendor == Vendor_amd || _vendor == Vendor_intel)
 	      addr_size_info();
+	    // FALLTHRU
 	  case 0x80000007:
 	  case 0x80000006:
 	    if (_vendor == Vendor_amd || _vendor == Vendor_via)
 	      cache_tlb_l2_l3();
+	    // FALLTHRU
 	  case 0x80000005:
 	    if (_vendor == Vendor_amd || _vendor == Vendor_via)
 	      cache_tlb_l1();
+	    // FALLTHRU
 	  case 0x80000004:
 	    {
 	      Unsigned32 *s = (Unsigned32 *)_model_str;
@@ -1074,6 +1092,7 @@ Cpu::identify()
                                       &s[2 + 4*i], &s[3 + 4*i]);
 	      _model_str[48] = 0;
 	    }
+	    // FALLTHRU
 	  case 0x80000003:
 	  case 0x80000002:
 	  case 0x80000001:
@@ -1130,54 +1149,54 @@ Cpu::show_cache_tlb_info(const char *indent) const
 
   *s = '\0';
   if (_l2_inst_tlb_4k_entries)
-    snprintf(s, sizeof(s), "/%u", _l2_inst_tlb_4k_entries);
+    snprintf(s, sizeof(s), "/%d", _l2_inst_tlb_4k_entries);
   if (_inst_tlb_4k_entries)
-    printf("%s%4u%s Entry I TLB (4K pages)", indent, _inst_tlb_4k_entries, s);
+    printf("%s%4d%s Entry I TLB (4K pages)", indent, _inst_tlb_4k_entries, s);
   *s = '\0';
   if (_l2_inst_tlb_4m_entries)
-    snprintf(s, sizeof(s), "/%u", _l2_inst_tlb_4k_entries);
+    snprintf(s, sizeof(s), "/%d", _l2_inst_tlb_4k_entries);
   if (_inst_tlb_4m_entries)
-    printf("   %4u%s Entry I TLB (4M pages)", _inst_tlb_4m_entries, s);
+    printf("   %4d%s Entry I TLB (4M pages)", _inst_tlb_4m_entries, s);
   if (_inst_tlb_4k_4m_entries)
-    printf("%s%4u Entry I TLB (4K or 4M pages)",
+    printf("%s%4d Entry I TLB (4K or 4M pages)",
            indent, _inst_tlb_4k_4m_entries);
   if (_inst_tlb_4k_entries || _inst_tlb_4m_entries || _inst_tlb_4k_4m_entries)
     putchar('\n');
   *s = '\0';
   if (_l2_data_tlb_4k_entries)
-    snprintf(s, sizeof(s), "/%u", _l2_data_tlb_4k_entries);
+    snprintf(s, sizeof(s), "/%d", _l2_data_tlb_4k_entries);
   if (_data_tlb_4k_entries)
-    printf("%s%4u%s Entry D TLB (4K pages)", indent, _data_tlb_4k_entries, s);
+    printf("%s%4d%s Entry D TLB (4K pages)", indent, _data_tlb_4k_entries, s);
   *s = '\0';
   if (_l2_data_tlb_4m_entries)
-    snprintf(s, sizeof(s), "/%u", _l2_data_tlb_4m_entries);
+    snprintf(s, sizeof(s), "/%d", _l2_data_tlb_4m_entries);
   if (_data_tlb_4m_entries)
-    printf("   %4u%s Entry D TLB (4M pages)", _data_tlb_4m_entries, s);
+    printf("   %4d%s Entry D TLB (4M pages)", _data_tlb_4m_entries, s);
   if (_data_tlb_4k_4m_entries)
-    printf("%s%4u Entry D TLB (4k or 4M pages)",
+    printf("%s%4d Entry D TLB (4k or 4M pages)",
            indent, _data_tlb_4k_4m_entries);
   if (_data_tlb_4k_entries || _data_tlb_4m_entries || _data_tlb_4k_4m_entries)
     putchar('\n');
 
   if (_l1_trace_cache_size)
-    printf("%s%3uK %c-ops T Cache (%u-way associative)\n",
+    printf("%s%3dK %c-ops T Cache (%d-way associative)\n",
            indent, _l1_trace_cache_size, Config::char_micro,
            _l1_trace_cache_asso);
 
   else if (_l1_inst_cache_size)
-    printf("%s%4u KB L1 I Cache (%u-way associative, %u bytes per line)\n",
+    printf("%s%4d KB L1 I Cache (%d-way associative, %d bytes per line)\n",
            indent, _l1_inst_cache_size, _l1_inst_cache_asso,
            _l1_inst_cache_line_size);
 
   if (_l1_data_cache_size)
-    printf("%s%4u KB L1 D Cache (%u-way associative, %u bytes per line)\n"
-           "%s%4u KB L2 U Cache (%u-way associative, %u bytes per line)\n",
+    printf("%s%4d KB L1 D Cache (%d-way associative, %d bytes per line)\n"
+           "%s%4d KB L2 U Cache (%d-way associative, %d bytes per line)\n",
            indent, _l1_data_cache_size, _l1_data_cache_asso,
            _l1_data_cache_line_size,
            indent, _l2_cache_size, _l2_cache_asso, _l2_cache_line_size);
 
   if (_l3_cache_size)
-    printf("%s%4u KB L3 U Cache (%u-way associative, %u bytes per line)\n",
+    printf("%s%4u KB L3 U Cache (%d-way associative, %d bytes per line)\n",
            indent, _l3_cache_size, _l3_cache_asso, _l3_cache_line_size);
 }
 
@@ -1203,55 +1222,54 @@ Cpu::muldiv(Unsigned32 val, Unsigned32 mul, Unsigned32 div)
 
 
 PUBLIC static inline
-Unsigned32
+Unsigned16
 Cpu::get_cs()
 {
-  Unsigned32 val;
+  Unsigned16 val;
   asm volatile ("mov %%cs, %0" : "=rm" (val));
   return val;
 }
 
 PUBLIC static inline
-Unsigned32
+Unsigned16
 Cpu::get_ds()
 {
-  Unsigned32 val;
+  Unsigned16 val;
   asm volatile ("mov %%ds, %0" : "=rm" (val));
   return val;
 }
 
 PUBLIC static inline
-Unsigned32
+Unsigned16
 Cpu::get_es()
 {
-  Unsigned32 val;
+  Unsigned16 val;
   asm volatile ("mov %%es, %0" : "=rm" (val));
   return val;
 }
 
 PUBLIC static inline
-Unsigned32
+Unsigned16
 Cpu::get_ss()
 {
-  Unsigned32 val;
+  Unsigned16 val;
   asm volatile ("mov %%ss, %0" : "=rm" (val));
   return val;
 }
 
 PUBLIC static inline
 void
-Cpu::set_ds(Unsigned32 val)
+Cpu::set_ds(Unsigned16 val)
 { asm volatile ("mov %0, %%ds" : : "rm" (val)); }
 
 PUBLIC static inline
 void
-Cpu::set_es(Unsigned32 val)
+Cpu::set_es(Unsigned16 val)
 { asm volatile ("mov %0, %%es" : : "rm" (val)); }
 
 //----------------------------------------------------------------------------
 IMPLEMENTATION[ia32, amd64]:
 
-#include "boot_info.h"
 #include "config.h"
 #include "div32.h"
 #include "gdt.h"
@@ -1298,8 +1316,12 @@ Cpu::pm_resume()
 
       set_tss();
     }
+  init_indirect_branch_mitigation();
+
   init_sysenter();
   wrmsr(_suspend_tsc, MSR_TSC);
+
+  try_enable_hw_performance_states(true);
 }
 
 PUBLIC static inline
@@ -1325,7 +1347,7 @@ Cpu::set_ldt(Unsigned16 val)
 
 PUBLIC static inline
 void
-Cpu::set_ss(Unsigned32 val)
+Cpu::set_ss(Unsigned16 val)
 { asm volatile ("mov %0, %%ss" : : "r" (val)); }
 
 PUBLIC static inline
@@ -1592,6 +1614,51 @@ Cpu::print_errata()
     }
 }
 
+/**
+ * Enable hardware controlled performance states (HWP) if available.
+ *
+ * HWP enables the processor to autonomously select performance states. The OS
+ * can hint the CPU at the desired optimizations. For example, a system running
+ * on battery may hint the CPU to optimize for low power consumption. We just
+ * enable HWP and configure it to select the performance target autonomously.
+ *
+ * See Intel Manual Volume 3 Chapter 14.4 for details.
+ */
+PRIVATE FIASCO_INIT_CPU
+void
+Cpu::try_enable_hw_performance_states(bool resume)
+{
+  enum
+  {
+    HWP_SUPPORT = 1 << 7,
+    HIGHEST_PERFORMANCE_SHIFT = 0,
+    LOWEST_PERFORMANCE_SHIFT = 24
+  };
+
+  if (!(_thermal_and_pm_eax & HWP_SUPPORT))
+    return;
+
+  // enable
+  wrmsr(0x1ULL, MSR_HWP_PM_ENABLE);
+
+  // let the hardware decide on everything (autonomous operation mode)
+  Unsigned64 hwp_caps = rdmsr(MSR_HWP_CAPABILITIES);
+  // Package_Control (bit 42) = 0
+  // Activity_Window (bits 41:32) = 0 (auto)
+  // Energy_Performance_Preference (bits 31:24) = 0x80 (default)
+  // Desired_Performance (bits 23:16) = 0 (default)
+  // Maximum_Performance (bits 15:8) = HIGHEST_PERFORMANCE(hwp_cap)
+  // Minimum_Performance (bits 7:0) = LOWEST_PERFORMANCE(hwp_cap)
+  Unsigned64 request =
+    0x80ULL << 24 |
+    (((hwp_caps >> HIGHEST_PERFORMANCE_SHIFT) & 0xff) << 8) |
+    ((hwp_caps >> LOWEST_PERFORMANCE_SHIFT) & 0xff);
+  wrmsr(request, MSR_HWP_REQUEST);
+
+  if (!resume && id() == Cpu_number::boot_cpu())
+    printf("HWP: enabled\n");
+}
+
 IMPLEMENT FIASCO_INIT_CPU
 void
 Cpu::init()
@@ -1617,9 +1684,14 @@ Cpu::init()
 
   set_cr4 (cr4);
 
-  // reset time stamp counter (better for debugging)
   if ((features() & FEAT_TSC) && can_wrmsr())
-    wrmsr(0, 0, MSR_TSC);
+    {
+      if (_ext_07_ebx & FEATX_IA32_TSC_ADJUST)
+        wrmsr(0, 0, MSR_IA32_TSC_ADJUST);
+      else
+        // at least reset time stamp counter (better for debugging)
+        wrmsr(0, 0, MSR_TSC);
+    }
 
   if ((features() & FEAT_PAT) && can_wrmsr())
     wrmsr(0x00010406, 0x00070406, MSR_PAT);
@@ -1739,22 +1811,56 @@ Cpu::enable_ldt(Address addr, int size)
 
 
 PUBLIC static inline
-Unsigned32
+Unsigned16
 Cpu::get_fs()
-{ Unsigned32 val; asm volatile ("mov %%fs, %0" : "=rm" (val)); return val; }
+{ Unsigned16 val; asm volatile ("mov %%fs, %0" : "=rm" (val)); return val; }
 
 PUBLIC static inline
-Unsigned32
+Unsigned16
 Cpu::get_gs()
-{ Unsigned32 val; asm volatile ("mov %%gs, %0" : "=rm" (val)); return val; }
+{ Unsigned16 val; asm volatile ("mov %%gs, %0" : "=rm" (val)); return val; }
 
 PUBLIC static inline
 void
-Cpu::set_fs(Unsigned32 val)
+Cpu::set_fs(Unsigned16 val)
 { asm volatile ("mov %0, %%fs" : : "rm" (val)); }
 
 PUBLIC static inline
 void
-Cpu::set_gs(Unsigned32 val)
+Cpu::set_gs(Unsigned16 val)
 { asm volatile ("mov %0, %%gs" : : "rm" (val)); }
 
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION[(ia32 || amd64 || ux) && !intel_ia32_branch_barriers]:
+
+PRIVATE inline FIASCO_INIT_CPU_AND_PM
+void
+Cpu::init_indirect_branch_mitigation()
+{}
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION[(ia32 || amd64) && intel_ia32_branch_barriers]:
+
+PRIVATE FIASCO_INIT_CPU_AND_PM
+void
+Cpu::init_indirect_branch_mitigation()
+{
+  if (_vendor == Vendor_intel)
+    {
+      Unsigned32 a, b, c, d;
+      cpuid(0, &a, &b, &c, &d);
+      if (a < 7)
+        panic("intel CPU does not support IBRS, IBPB, STIBP (cpuid max < 7)\n");
+
+      cpuid(7, 0, &a, &b, &c, &d);
+      if (!(d & (1UL << 26)))
+        panic("IBRS / IBPB not supported by CPU: %x\n", d);
+
+      if (!(d & (1UL << 27)))
+        panic("STIBP not supported by CPU: %x\n", d);
+
+      // enable STIBP
+      wrmsr(2, 0x48);
+    }
+}

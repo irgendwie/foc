@@ -50,7 +50,7 @@
  * Sharing memory between applications, client side.
  * \example examples/libs/l4re/c++/shared_ds/ds_srv.cc
  * Sharing memory between applications, server/creator side.
- * \example examples/libs/l4re/c++/shared_ds/shared_ds.lua
+ * \example examples/libs/l4re/c++/shared_ds/shared_ds.cfg
  * Sharing memory between applications, configuration file.
  *
  * \example examples/libs/l4re/streammap/server.cc
@@ -69,7 +69,7 @@
  * libirq usage example using a self-created thread.
  *
  * \example examples/libs/libirq/async_isr.c
- * libirq usage example using asychronous ISR handler functionality.
+ * libirq usage example using asynchronous ISR handler functionality.
  *
  * \example examples/sys/migrate/thread_migrate.cc
  * Thread migration example.

@@ -1,4 +1,4 @@
-INTERFACE [ia32 || amd64]:
+INTERFACE [(ia32 || amd64) && !no_ldt]:
 
 #include "spin_lock.h"
 
@@ -28,7 +28,7 @@ protected:
 };
 
 // ---------------------------------------------------------------
-IMPLEMENTATION [ia32 || amd64]:
+IMPLEMENTATION [(ia32 || amd64) && !no_ldt]:
 
 #include "cpu.h"
 #include "globals.h"
@@ -57,10 +57,13 @@ Space::Ldt::~Ldt()
                                   reinterpret_cast<void*>(addr()));
 }
 
-
-IMPLEMENT inline NEEDS["cpu.h", "globals.h"]
+IMPLEMENT_OVERRIDE inline NEEDS["cpu.h", "globals.h"]
 void
-Space::switchin_ldt() const
+Space::switchin_context(Space *from)
 {
-  Cpu::cpus.cpu(current_cpu()).enable_ldt(_ldt.addr(), _ldt.size());
+  if (this != from)
+    {
+      Mem_space::switchin_context(from);
+      Cpu::cpus.cpu(current_cpu()).enable_ldt(_ldt.addr(), _ldt.size());
+    }
 }

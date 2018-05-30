@@ -45,15 +45,15 @@ exit_question()
   Proc::cli();
   exit_question_active = 1;
 
-  Pic::Status irqs = Pic::disable_all_save();
+  Unsigned16 irqs = Pic::disable_all_save();
   if (Config::getchar_does_hlt_works_ok)
     {
       Timer_tick::set_vectors_stop();
-      Timer_tick::enable(Cpu_number::boot_cpu()); // hmexit alway on CPU 0
+      Timer_tick::enable(Cpu_number::boot_cpu()); // hm, exit always on CPU 0
       Proc::sti();
     }
 
-  // make sure that we don't acknowledg the exit question automatically
+  // make sure that we don't acknowledge the exit question automatically
   Kconsole::console()->change_state(Console::PUSH, 0, ~Console::INENABLED, 0);
   puts("\nReturn reboots, \"k\" enters L4 kernel debugger...");
 
@@ -78,8 +78,6 @@ main_arch()
 {
   // console initialization
   set_exit_question(&exit_question);
-
-  //Pic::disable_all_save();
 }
 
 
@@ -107,6 +105,8 @@ int FIASCO_FASTCALL boot_ap_cpu() __asm__("BOOT_AP_CPU");
 
 int FIASCO_FASTCALL boot_ap_cpu()
 {
+  Apic::activate_by_msr();
+
   Cpu_number _cpu = Apic::find_cpu(Apic::get_id());
   bool cpu_is_new = false;
   static Cpu_number last_cpu; // keep track of the last cpu ever appeared
@@ -131,17 +131,19 @@ int FIASCO_FASTCALL boot_ap_cpu()
 
   Cpu &cpu = Cpu::cpus.cpu(_cpu);
 
-  Idt::load();
 
   if (cpu_is_new)
     {
       Kmem::init_cpu(cpu);
+      Idt::init_current_cpu();
       Apic::init_ap();
       Apic::apic.cpu(_cpu).construct(_cpu);
       Ipi::init(_cpu);
     }
   else
     {
+      Kmem::resume_cpu(_cpu);
+      Idt::load();
       cpu.pm_resume();
       Pm_object::run_on_resume_hooks(_cpu);
     }

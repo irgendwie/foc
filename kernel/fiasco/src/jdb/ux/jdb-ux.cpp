@@ -110,6 +110,7 @@ void
 Jdb::save_disable_irqs(Cpu_number cpu)
 {
   assert(cpu == Cpu_number::boot_cpu());
+  (void)cpu;
   jdb_irq_state = Proc::cli_save();
 }
 
@@ -119,6 +120,7 @@ void
 Jdb::restore_irqs(Cpu_number cpu)
 {
   assert(cpu == Cpu_number::boot_cpu());
+  (void)cpu;
   Proc::sti_restore(jdb_irq_state);
 }
 
@@ -136,8 +138,6 @@ Jdb::init()
 
   register_libc_atexit(leave_getchar);
   atexit(leave_getchar);
-
-  Thread::set_int3_handler(handle_int3_threadctx);
 }
 
 PRIVATE
@@ -169,15 +169,7 @@ Jdb::int3_extension()
   Space *space = NULL; //get_task_id(0);
   error_buffer.cpu(Cpu_number::boot_cpu()).clear();
 
-  if (todo == 0x3c && peek ((Unsigned8 *) (addr+1), user) == 13)
-    {
-      enter_getchar();
-      entry_frame->_ax = Vkey::get();
-      Vkey::clear();
-      leave_getchar();
-      return 1;
-    }
-  else if (todo != 0xeb)
+  if (todo != 0xeb)
     {
       error_buffer.cpu(Cpu_number::boot_cpu()).printf("INT 3");
       return 0;
@@ -273,13 +265,13 @@ Jdb::virt_to_kvirt(Address virt, Mem_space* space)
       // We can directly access it via virtual addresses if it's kernel code
       // (which is always mapped, but doesn't appear in the kernel pagetable)
       //  or if we find a mapping for it in the kernel's master pagetable.
-      return (virt >= (Address)&Mem_layout::load && 
-	      virt <  (Kernel_thread::init_done() 
-				? (Address)&Mem_layout::end
-				: (Address)&Mem_layout::initcall_end)
-	      || (Kernel_task::kernel_task()->virt_to_phys(virt) != ~0UL))
-	? virt
-	: (Address) -1;
+      return ((virt >= (Address)&Mem_layout::load &&
+               virt <  (Kernel_thread::init_done()
+                        ? (Address)&Mem_layout::end
+                        : (Address)&Mem_layout::initcall_end))
+              || Kernel_task::kernel_task()->virt_to_phys(virt) != ~0UL)
+             ? virt
+             : (Address) -1;
     }
   else
     {

@@ -209,7 +209,7 @@ Jdb_thread_list::get_space_dbgid(Thread *t)
 // --------------------------------------------------------------------------
 IMPLEMENTATION [sched_wfq || sched_fp_wfq]:
 
-template<typename T> struct Jdb_thread_list_policy;
+template<typename T> class Jdb_thread_list_policy;
 
 template<typename RQP>
 static inline NOEXPORT
@@ -327,8 +327,9 @@ Jdb_thread_list::sc_iter_next(Sched_context *t)
 IMPLEMENTATION [sched_wfq]:
 
 template<>
-struct Jdb_thread_list_policy<Ready_queue_wfq<Sched_context> >
+class Jdb_thread_list_policy<Ready_queue_wfq<Sched_context> >
 {
+public:
   static Sched_context **link(Sched_context *t)
   { return t->_ready_link; }
 
@@ -372,23 +373,6 @@ Jdb_thread_list::sc_iter_next(Sched_context *)
 
 
 // --------------------------------------------------------------------------
-IMPLEMENTATION [sched_fp_edf]:
-static inline NOEXPORT
-Sched_context *
-Jdb_thread_list::sc_iter_prev(Sched_context *)
-{
-  return 0;
-}
-
-static inline NOEXPORT
-Sched_context *
-Jdb_thread_list::sc_iter_next(Sched_context *)
-{
-  return 0;
-}
-
-
-// --------------------------------------------------------------------------
 IMPLEMENTATION:
 
 
@@ -405,8 +389,8 @@ Jdb_thread_list::iter_prev(Thread *t)
 	  if (o == Kobject_dbg::end())
 	    --o;
 	}
-      while (!Kobject::dcast<Thread*>(Kobject::from_dbg(*o)));
-      return Kobject::dcast<Thread*>(Kobject::from_dbg(*o));
+      while (!cxx::dyn_cast<Thread*>(Kobject::from_dbg(*o)));
+      return cxx::dyn_cast<Thread*>(Kobject::from_dbg(*o));
     }
   else
     return static_cast<Thread*>(sc_iter_prev(t->sched())->context());
@@ -426,8 +410,8 @@ Jdb_thread_list::iter_next(Thread *t)
 	  if (o == Kobject_dbg::end())
 	    ++o;
 	}
-      while (!Kobject::dcast<Thread*>(Kobject::from_dbg(*o)));
-      return Kobject::dcast<Thread*>(Kobject::from_dbg(*o));
+      while (!cxx::dyn_cast<Thread*>(Kobject::from_dbg(*o)));
+      return cxx::dyn_cast<Thread*>(Kobject::from_dbg(*o));
     }
   else
     return static_cast<Thread*>(sc_iter_next(t->sched())->context());
@@ -623,13 +607,13 @@ Jdb_thread_list::action(int cmd, void *&argbuf, char const *&fmt, int &)
 
 PRIVATE static inline
 void
-Jdb_thread_list::print_thread_name(Kobject_common const * o, unsigned len)
+Jdb_thread_list::print_thread_name(Kobject_common const * o, int len)
 {
   Jdb_kobject_name *nx = Jdb_kobject_extension::find_extension<Jdb_kobject_name>(o);
 
   if (nx)
     {
-      len = min(nx->max_len(), len);
+      len = min((int)nx->max_len(), len);
       printf("%-*.*s", len, len, nx->name());
     }
   else
@@ -641,7 +625,7 @@ Jdb_thread_list::list_threads_show_thread(Thread *t)
 {
   char to[24];
   int  waiting_for = 0;
-  unsigned plen = 0;
+  int  plen = 0;
 
   *to = '\0';
 
@@ -660,12 +644,12 @@ Jdb_thread_list::list_threads_show_thread(Thread *t)
   print_thread_name(t, 15);
   plen += 15;
 
-  plen += printf("  %2lx ", get_prio(t));
+  plen += printf("  %2lx ", (unsigned long)get_prio(t));
 
   if (get_space_dbgid(t) == ~0L)
     plen += printf(" ----- ");
   else
-    plen += printf(" %5lx ", get_space_dbgid(t));
+    plen += printf(" %5lx ", Kobject_dbg::pointer_to_id(t->space()));
 
   if (Jdb_thread::has_partner(t))
     {
@@ -697,11 +681,11 @@ Jdb_thread_list::list_threads_show_thread(Thread *t)
 	      if (us < 0)
 		us = 0;
 	      if (us >= 1000000)
-		snprintf(to, sizeof(to), " %3us", us / 1000000);
+		snprintf(to, sizeof(to), " %3ds", us / 1000000);
 	      else if (us >= 1000)
-		snprintf(to, sizeof(to), " %3um", us / 1000);
+		snprintf(to, sizeof(to), " %3dm", us / 1000);
 	      else
-		snprintf(to, sizeof(to), " %3u%c", us, Config::char_micro);
+		snprintf(to, sizeof(to), " %3d%c", us, Config::char_micro);
 	    }
 	}
     }
@@ -725,10 +709,10 @@ Jdb_thread_list::list_threads_show_thread(Thread *t)
 	    if (*c != '5')
 	      break;
 
-	  plen += printf("(%4ld) ", stack_depth - sizeof (Thread));
+	  plen += printf("(%4lu) ", stack_depth - sizeof (Thread));
 	}
 
-      if (Jdb_screen::width() > plen)
+      if ((int)Jdb_screen::width() > plen)
 	Jdb_thread::print_state_long(t, Jdb_screen::width() - plen);
       putstr("\033[K\n");
     }
@@ -844,6 +828,7 @@ Jdb_thread_list::list_threads(Thread *t_start, char pr)
 		  break;
 #endif
 		case KEY_RETURN: // show current tcb
+		case KEY_RETURN_2:
 		  if (jdb_show_tcb != 0)
 		    {
 		      t = Jdb_thread_list::index(y);

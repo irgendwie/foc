@@ -20,6 +20,15 @@ public:
   bool exclude_logging() { return false; }
 };
 
+struct Trex
+{
+  Trap_state s;
+  void set_ipc_upcall()
+  { s.error_code = 0x10000000; /* see Msr */ }
+
+  void dump() { s.dump(); }
+};
+
 
 IMPLEMENTATION:
 
@@ -27,9 +36,9 @@ IMPLEMENTATION:
 
 PUBLIC inline
 void
-Trap_state::sanitize_user_state()
+Trap_state::copy_and_sanitize(Trap_state const *)
 {
-  // implement me
+  // FIXME: unimplemented
 }
 
 PUBLIC inline
@@ -49,13 +58,6 @@ Trap_state::error() const
 
 PUBLIC inline
 void
-Trap_state::set_ipc_upcall()
-{
-  error_code = 0x10000000; // see Msr
-}
-
-PUBLIC inline
-void
 Trap_state::set_pagefault(Mword pfa, Mword error)
 {
   pf_address = pfa;
@@ -71,12 +73,11 @@ PUBLIC
 void
 Trap_state::dump()
 {
-  char const *excpts[] = 
-    {"reset","machine check"};
-  
+  //char const *excpts[] = { "reset", "machine check" };
+
   printf("EXCEPTION: pfa=%08lx, error=%08lx\n",
          //excpts[((error_code & ~0xff) >> 8) - 1]
-          pf_address, error_code);
+         pf_address, error_code);
 
   printf("SP: %08lx LR: %08lx SRR0: %08lx SRR1 %08lx\n\n"
          "R[0]  %08lx\n"
@@ -86,4 +87,3 @@ Trap_state::dump()
 	 r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
 	 r[8], r11, r12);
 }
-

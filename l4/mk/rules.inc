@@ -16,6 +16,10 @@ BID_F_COMPILER_INT_NAME = FC
 BID_AS_COMPILER = CC
 BID_AS_COMPILER_INT_NAME = INT_CPP_NAME
 
+define BID_MAKE_RULE_CREATE_SUBDIR
+  $$(if $$(wildcard $$(dir $$@)),,$$(VERBOSE)$(MKDIR) $$(dir $$@))
+endef
+
 # Template for our make rules.
 # arg1: the target or target pattern (e.g., %.o)
 # arg2: the prerequisites (e.g., %.c)
@@ -26,17 +30,19 @@ BID_AS_COMPILER_INT_NAME = INT_CPP_NAME
 #       $(<arg3>FLAGS) as flags
 # arg4: extra command line flags for the compile
 define BID_MAKE_RULE_template_gendep
-$(1): $(2)
+$(1): $(2) $(GENERAL_D_LOC)
 	@$$(COMP_MESSAGE)
-	$$(VERBOSE)$$(call MAKEDEP,$$($(BID_$(3)_COMPILER_INT_NAME))) $$($(BID_$(3)_COMPILER)) -c $$(DEPEND_FLAG) $$(CPPFLAGS) $$($(3)FLAGS) $(4) $$(call absfilename,$$<) -o $$@
+	$(call BID_MAKE_RULE_CREATE_SUBDIR)
+	$$(VERBOSE)$$(call MAKEDEP,$$($(BID_$(3)_COMPILER_INT_NAME))) $$($(BID_$(3)_COMPILER)) -c $$(DEPEND_FLAG) $$(CPPFLAGS) $$($(3)FLAGS) $(4) $$< -o $$@
 	$$(DEPEND_VERBOSE)$$(call DEPEND_EXTEND_FUNC, $$(*F).d, $$(dir $$@).$$(notdir $$@).d)
 endef
 
 # Template for our make rules (make rules that do not use gendep)
 define BID_MAKE_RULE_template_nongendep
-$(1): $(2)
+$(1): $(2) $(GENERAL_D_LOC)
 	@$$(COMP_MESSAGE)
-	$$(VERBOSE)$$($(BID_$(3)_COMPILER)) -c $$(DEPFLAGS) $$(DEPFLAGS_$(3)) $$(CPPFLAGS) $$($(3)FLAGS) $(4) $$(call absfilename,$$<) -o $$@
+	$(call BID_MAKE_RULE_CREATE_SUBDIR)
+	$$(VERBOSE)$$($(BID_$(3)_COMPILER)) -c $$(DEPFLAGS) $$(DEPFLAGS_$(3)) $$(CPPFLAGS) $$($(3)FLAGS) $(4) $$< -o $$@
 endef
 
 # which template rule do we really use
@@ -47,9 +53,9 @@ BID_MAKE_RULE_template = $(BID_MAKE_RULE_template_nongendep)
 # targets: .o, .s.o, .pr.o, and .pr.s.o
 #
 define BID_GENERATE_DEFAULT_MAKE_RULES
-  $(call BID_MAKE_RULE_template,$(1).o,$(2),$(3),$(4))
+  $(call BID_MAKE_RULE_template,$(1).o,$(2),$(3),$(4) $$(call BID_mode_var,NOPICFLAGS))
   $(call BID_MAKE_RULE_template,$(1).s.o,$(2),$(3),$(4) $$(PICFLAGS))
-  $(call BID_MAKE_RULE_template,$(1).pr.o,$(2),$(3),$(4) -DPROFILE -pg)
+  $(call BID_MAKE_RULE_template,$(1).pr.o,$(2),$(3),$(4) $$(call BID_mode_var,NOPICFLAGS) -DPROFILE -pg)
   $(call BID_MAKE_RULE_template,$(1).pr.s.o,$(2),$(3),$(4) $$(PICFLAGS) -DPROFILE -pg)
 endef
 
@@ -60,7 +66,7 @@ endef
 #
 define BID_GENERATE_CXX_MAKE_RULES
   $(call BID_GENERATE_DEFAULT_MAKE_RULES,%,%.$(1),CXX)
-  $(call BID_MAKE_RULE_template,%.ne.o,%.$(1),CXX,$$(CXXFLAGS_NOEXC))
+  $(call BID_MAKE_RULE_template,%.ne.o,%.$(1),CXX,$$(CXXFLAGS_NOEXC) $$(call BID_mode_var,NOPICFLAGS))
   $(call BID_MAKE_RULE_template,%.s.ne.o,%.$(1),CXX,$$(CXXFLAGS_NOEXC) $$(PICFLAGS))
 endef
 
@@ -83,6 +89,15 @@ define BID_GENERATE_F_MAKE_RULES
 endef
 
 #
+# Generate the ASM set of make rules.
+# prerequisites: %.<arg1> (usually %.S)
+# targets: %.o, %.s.o, %.pr.o, and %.pr.s.o
+#
+define BID_GENERATE_ASM_MAKE_RULES
+  $(call BID_GENERATE_DEFAULT_MAKE_RULES,%$(BID_S_INFIX),%.$(1),AS,$(if $(filter .$(1),$(BID_ASM_CPP_FILE_EXTENSIONS)),-x assembler-with-cpp,))
+endef
+
+#
 # arg 1: target pattern
 #     2: source pattern
 #     3: compiler
@@ -90,6 +105,7 @@ endef
 define BID_GENERATE_I_MAKE_RULE
 $(1): $(2) FORCE
 	@$$(COMP_MESSAGE)
+	$(call BID_MAKE_RULE_CREATE_SUBDIR)
 	$$(VERBOSE)$(3) -E -H -dD $$(CPPFLAGS) $(4) $$(call absfilename,$$<) -o $$@
 	$$(VERBOSE)$$(if $$(DO_SHOW_RESULT_FILE),$$(PAGER) $$@)
 endef
@@ -101,5 +117,6 @@ endef
 define BID_GENERATE_S_MAKE_RULE
 %.S: $(1) FORCE
 	@$$(COMP_MESSAGE)
+	$(call BID_MAKE_RULE_CREATE_SUBDIR)
 	$$(VERBOSE)$(2) -S $(3) $(CPPFLAGS) $$(call absfilename,$$<) -fverbose-asm -o $$@
 endef

@@ -1,52 +1,75 @@
 /* -*- c -*- */
+
 #include "globalconfig.h"
+#include "kernel.ld.inc"
+
 /* this file defines the construction of the kernel's virtual address
    space */
 #ifdef CONFIG_CPU_VIRT
 virt_address       = kernel_load_addr;
-#else
+#elif defined CONFIG_BIT32
 virt_address       = 0xf0000000;
+#elif defined CONFIG_BIT64
+virt_address       = 0xffff000040000000;
 #endif
 phys_offset        = virt_address - kernel_load_addr;
 
-
+#if defined CONFIG_BIT32
 OUTPUT_FORMAT("elf32-littlearm", "elf32-bigarm",
               "elf32-littlearm")
+
 OUTPUT_ARCH(arm)
+#define WORD_SIZE 4
+#define MWORD LONG
+
+#elif defined CONFIG_BIT64
+
+OUTPUT_FORMAT("elf64-littleaarch64", "elf64-bigaarch64",
+              "elf64-littleaarch64")
+
+OUTPUT_ARCH(aarch64)
+#define WORD_SIZE 8
+#define MWORD QUAD
+#else
+# error Either CONFIG_BIT32 or CONFIG_BIT64 must be set
+#endif
+
 ENTRY(_start)
+
+PHDRS {
+  bstrap PT_LOAD;
+  kip PT_LOAD;
+  koptions PT_LOAD;
+  tramp PT_LOAD;
+  kernel PT_LOAD;
+  excpt PT_LOAD;
+  initcall PT_LOAD;
+  l4_kip 0x10;
+  l4_koptions 0x11;
+}
+
+EXTERN (_start_kernel)
+ASSERT (_start_kernel > 0, "invalid _start_kernel address")
 
 SECTIONS {
 
 
   /DISCARD/ : {			/* Exit code and data		*/
 		*(.exitcall.exit)
+                *(.bootstrap.dropped*)
 	      }
 	      
   . = kernel_load_addr + 0x1000;
 	      
   .text : {
-    bootstrap*(.init)
-    bootstrap*(.text .text.* .gnu.linkonce.t.*)
-    bootstrap*(.glue_7t) *(.glue_7)
-    bootstrap*(.got .got.*)
-    bootstrap*(.fini)
-    
-    bootstrap*(.rodata .rodata.* .gnu.linkonce.r.* .rodata1)
+    MWORD(_start_kernel)
+    MWORD(my_kernel_info_page)
+    KEEP(*(.bootstrap.info))
+    ASSERT (ABSOLUTE(.) == end_of_bootstrap_info, "invalid size of bootstrap.info");
 
-    . = ALIGN(0x40);
-    
-    bootstrap*(.data .data.* .gnu.linkonce.d.*)
-    bootstrap*(.anno)
-
-    bootstrap*(.data) 
-    bootstrap*(.gnu.linkonce.d*)
-  }
-
-  PROVIDE(bootstrap_bss_start = .);
-  .bss_bootstrap : {
-    bootstrap*(.bss .bss.* COMMON .gnu.linkonce.b.*)
-  }
-  PROVIDE(bootstrap_bss_end = .);
+    . = ABSOLUTE(start_of_loader);
+    *(.bootstrap.text)
+  } :bstrap
 
   . = ALIGN(4K);
   end_of_loader = .;
@@ -59,18 +82,18 @@ SECTIONS {
     _initkip_start = .;
     KEEP(*(.initkip.version))
     KEEP(*(.initkip.features))
-    KEEP(*(.initkip.features.fini))
+    KEEP(*(.initkip.features.end))
     _initkip_end = .;
     . = ALIGN(4K);
-  }
+  } :kip :l4_kip
 
   .koptions : AT (ADDR(.koptions) - phys_offset) {
     *(.koptions)
-  }
+  } :koptions :l4_koptions
 
   .mp_tramp : AT (ADDR(.mp_tramp) - phys_offset) {
     KEEP(*(.mp_tramp))
-  }
+  } :tramp
 
   .text_kernel : AT (ADDR(.text_kernel) - phys_offset) {
     crt0.o(.text)
@@ -86,14 +109,10 @@ SECTIONS {
 
     *(.rodata .rodata.* .gnu.linkonce.r.* .rodata1)
 
-    . = ALIGN(4);
-    PROVIDE (_log_table = .);
-    /*
-     * The section must start with ".debug" because else the linker
-     * complains about references to discarded sections
-     */
-    KEEP(*(SORT(.debug.jdb.log_table)))
-    PROVIDE (_log_table_end = .);
+    . = ALIGN(WORD_SIZE);
+    JDB_TABLE(log);
+    . = ALIGN(WORD_SIZE);
+    JDB_TABLE(typeinfo);
 
     . = ALIGN(0x40);
     
@@ -182,7 +201,7 @@ SECTIONS {
 
     PROVIDE(_edata  =  .);
 
-  }
+  } :kernel
 
   . = ALIGN(8);
   .per_cpu_data : AT (ADDR(.per_cpu_data) - phys_offset) {
@@ -216,9 +235,9 @@ SECTIONS {
 
   ivt_start = ADDR(.bss) + SIZEOF(.bss) - phys_offset;
   .excp 0xffff0000 : AT (ivt_start) {
-    *(.vect .excp.text)
+    KEEP (*(.vect)) *(.excp.text)
     *(.vect.extra)
-  }
+  } :excpt
 
   . = __end_of_the_kernel + SIZEOF(.excp);
 
@@ -230,7 +249,7 @@ SECTIONS {
     *(.initcall.*)
     . = ALIGN(4K);
     _initcall_end = .;
-  } 
+  } :initcall
 
   /DISCARD/ :{
     *(.stab .stabstr .stab.excl .stab.exclstr)

@@ -1,4 +1,4 @@
-// vim:se ft=asms:
+// vim: ft=asm
 #pragma once
 
 #include "globalconfig.h"
@@ -32,7 +32,7 @@
  */
 .macro RESET_THREAD_CANCEL_AT tcb
 	ldr 	r0, [\tcb, #(OFS__THREAD__STATE)]
-	bic	r0, r0, #0x100
+	bic	r0, r0, #VAL__Thread_cancel
 	str	r0, [\tcb, #(OFS__THREAD__STATE)]
 .endm
 
@@ -44,22 +44,17 @@
 .align 4
 .global sys_call_table
 sys_call_table:
-	.word sys_kdb_ke
-	.word sys_kdb_ke
+	.word 0
+	.word 0
 	.word sys_ipc_wrapper
 	.word sys_arm_mem_op
-	.word sys_invoke_debug_wrapper
-	.word sys_kdb_ke
-	.word sys_kdb_ke
-	.word sys_kdb_ke
-	.word sys_kdb_ke
-	.word sys_kdb_ke
-	.word sys_kdb_ke
 .endm
 
-.macro GEN_VCPU_UPCALL THREAD_VCPU, LOAD_USR_SP, LOAD_USR_VCPU, USR_ONLY
+.macro GEN_VCPU_UPCALL THREAD_VCPU, LOAD_USR_SP, LOAD_USR_VCPU
 .align 4
 .global leave_by_vcpu_upcall;
+
+#define OFS__VCPU_STATE__RF (VAL__SIZEOF_TRAP_STATE - RF_SIZE + OFS__VCPU_STATE__TREX)
 
 leave_by_vcpu_upcall:
 	sub 	sp, sp, #(RF_SIZE + 3*4)   @ restore old return frame
@@ -69,24 +64,17 @@ leave_by_vcpu_upcall:
 	/* restore original IP */
 	CONTEXT_OF r1, sp
 	ldr	r2, [r1, #(\THREAD_VCPU)]
-	add	r2, r2, #(VAL__SIZEOF_TRAP_STATE - RF_SIZE)
+	add	r2, r2, #(OFS__VCPU_STATE__RF)
 
 	/* r1 = current() */
 	/* r2 = &vcpu_state->ts.r[13] */
 
 	ldr 	r0, [r1, #(OFS__THREAD__EXCEPTION_IP)]
 	str	r0, [r2, #RF(PC, 0)]
-        .if ! \USR_ONLY
-          ldr     r0, [r1, #(OFS__THREAD__STATE)]
-          tst     r0, #0x2000000 @ext vcpu ?
-        .endif
 	ldr	r0, [r1, #(OFS__THREAD__EXCEPTION_PSR)]
 	str	r0, [r2, #RF(PSR, 0)]
-	bic	r0, #0x20 // force ARM mode
-        .if ! \USR_ONLY
-          bicne   r0, #0xf
-          orrne   r0, #0x13
-        .endif
+	bic	r0, #0x2f // force ARM mode
+	orr   r0, #0x10
 	str	r0, [sp, #RF(PSR, 3*4)]
 
         ldr	r0, [sp, #RF(USR_LR, 3*4)]
@@ -110,7 +98,7 @@ leave_by_vcpu_upcall:
 
 	ldr	r0, [sp]
 	str	r0, [r2, #-52]
-        sub     r2, r2, #64     @ now r2 points to the VCPU STATE again
+        sub     r2, r2, #(OFS__VCPU_STATE__RF)     @ now r2 points to the VCPU STATE again
 
 	add	sp, sp, #(3*4)
 
@@ -139,7 +127,6 @@ leave_by_vcpu_upcall:
 	str	lr, [sp, #RF(PSR, 0)]
 
 	stmdb	sp!, {r0 - r12}
-	sub sp, sp, #4
 	mov	r0, #-1			@ pfa
 	mov	r1, #GET_HSR(0x33)	@ err
 	orr	r1, #\type		@ + type
@@ -150,7 +137,7 @@ leave_by_vcpu_upcall:
 	ldr	pc, 3f
 
 1:
-	add	sp, sp, #12		@ pfa, err and tpidruro
+	add	sp, sp, #8		@ pfa, err
 	ldmia	sp!, {r0 - r12}
 	ldr	lr, [sp, #RF(PSR, 0)]
 	msr	cpsr, lr
@@ -209,6 +196,23 @@ kern_kdebug_ipi_entry:
 	ldr	pc, .LCslowtrap_entry
 .endm
 
+.macro GEN_EXCEPTION_RETURN
+	.global __return_from_user_invoke
+exception_return:
+	disable_irqs
+	ldr	sp, [sp]
+__return_from_user_invoke:
+	add	sp, sp, #8 // pfa, err
+	ldmia	sp!, {r0 - r12}
+	return_from_exception
+.endm
+
+.macro GEN_IRET
+	.global __iret
+__iret:
+	return_from_exception
+.endm
+
 .macro GEN_LEAVE_BY_TRIGGER_EXCEPTION
 .align 4
 .global leave_by_trigger_exception
@@ -217,15 +221,13 @@ leave_by_trigger_exception:
 	sub 	sp, sp, #RF_SIZE   @ restore old return frame
 	stmdb 	sp!, {r0 - r12}
 
-	sub sp, sp, #4
-
 	/* restore original IP */
 	CONTEXT_OF r1, sp
 	ldr 	r0, [r1, #(OFS__THREAD__EXCEPTION_IP)]
-	str	r0, [sp, #RF(PC, 14*4)]
+	str	r0, [sp, #RF(PC, 13*4)]
 
 	ldr	r0, [r1, #(OFS__THREAD__EXCEPTION_PSR)]
-	str	r0, [sp, #RF(PSR, 14*4)]
+	str	r0, [sp, #RF(PSR, 13*4)]
 
 	mov     r0, #~0
 	str	r0, [r1, #(OFS__THREAD__EXCEPTION_IP)]
