@@ -1,0 +1,2 @@
+requires: libstdc++ stdlibs libpthread l4virtio-server
+maintainer: sarah.hoffmann@kernkonzept.com

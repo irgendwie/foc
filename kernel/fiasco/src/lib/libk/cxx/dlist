@@ -165,10 +165,10 @@ public:
     Iterator &operator ++ ()
     {
       if (this->_c)
-	Base::Iterator::operator ++ ();
+        Base::Iterator::operator ++ ();
 
       if (this->_c == _h)
-	this->_c = 0;
+        this->_c = 0;
 
       return *this;
     }
@@ -188,10 +188,10 @@ public:
     R_iterator &operator ++ ()
     {
       if (this->_c)
-	Base::Iterator::operator -- ();
+        Base::Iterator::operator -- ();
 
       if (this->_c == _h)
-	this->_c = 0;
+        this->_c = 0;
 
       return *this;
     }
@@ -205,7 +205,7 @@ public:
     typename C::Item *_h;
   };
 
-  typedef typename Base::Iterator BaseIterator;
+  //typedef typename Base::Iterator Iterator;
   enum Pos
   { Back, Front };
 
@@ -219,9 +219,9 @@ public:
     T *h = H::head(_f);
     if (e == C::next(e)) // must be the last
       {
-	Base::remove_last(e);
-	H::set_head(_f, 0);
-	return;
+        Base::remove_last(e);
+        H::set_head(_f, 0);
+        return;
       }
 
     if (e == H::head(_f))
@@ -244,9 +244,9 @@ public:
       H::set_head(_f, Base::self_insert(e));
     else
       {
-	Base::insert_before(e, this->iter(h));
-	if (pos == Front)
-	  H::set_head(_f, e);
+        Base::insert_before(e, this->iter(h));
+        if (pos == Front)
+          H::set_head(_f, e);
       }
   }
 
@@ -300,7 +300,7 @@ public:
   bool empty() const { return C::next(static_cast<T*>(&_h)) == &_h; }
 
   void remove(T *e) { Base::remove(e); }
-  void erase(Iterator const &e) { return Base::erase(e); }
+  Iterator erase(Iterator const &e) { return Base::erase(e); }
 
   void push(T *e, Pos pos)
   {
@@ -324,3 +324,4 @@ private:
 };
 
 }
+

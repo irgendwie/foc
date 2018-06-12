@@ -1,4 +1,4 @@
-IMPLEMENTATION [io && (ia32 || amd64 || ux)]:
+IMPLEMENTATION [io && (ia32 || amd64 || ux) && !no_io_pagefault]:
 
 //
 // disassamble IO statements to compute the port address and
@@ -85,6 +85,7 @@ Thread::get_ioport(Address eip, Trap_state *ts, unsigned *port, unsigned *size)
 	    return false;
 	}
 
+      /* FALLTHRU */
     case 0xf3:			// REP
       switch (mem_space()->peek((Unsigned8*)(eip + 1), from_user))
 	{
@@ -144,8 +145,8 @@ Thread::handle_io_page_fault(Trap_state *ts)
   // pager. If it was a page fault, check the faulting address to prevent
   // touching userland.
   if (eip <= Mem_layout::User_max &&
-      (ts->_trapno == 13 && (ts->_err & 7) == 0 ||
-       ts->_trapno == 14 && Kmem::is_io_bitmap_page_fault(ts->_cr2)))
+      ((ts->_trapno == 13 && (ts->_err & 7) == 0) ||
+       (ts->_trapno == 14 && Kmem::is_io_bitmap_page_fault(ts->_cr2))))
     {
       unsigned port, size;
       if (get_ioport(eip, ts, &port, &size))
@@ -174,24 +175,68 @@ Thread::handle_io_page_fault(Trap_state *ts)
 	  // consecutive exception
 	  ts->_cr2 = io_page;
 
-	  if (EXPECT_FALSE(state() & Thread_alien))
+	  if (EXPECT_FALSE((state() & Thread_alien)
+                           || vcpu_exceptions_enabled(vcpu_state().access())))
 	    {
 	      // special case for alien tasks: Don't generate pagefault but
 	      // send (pagefault) exception to pager.
-	      ts->_trapno = 14;
+	      ts->_trapno = 13;
+              ts->_err = 0;
+              _recover_jmpbuf = 0;
 	      if (send_exception(ts))
 		return 1;
-	      else
+              else
 		return 2; // fail, don't send exception again
-	    }
+            }
 
           bool ipc_code = handle_page_fault_pager(_pager, io_page,
                                                   io_error_code,
                                                   L4_msg_tag::Label_io_page_fault);
 
           if (ipc_code)
-	    return 1;
+            {
+              _recover_jmpbuf = 0;
+              return 1;
+            }
+
+          // send IO-Port fault allways as trap 13 even if it comes from a PF
+          // on the IO bitmap (would be trap 14 with io flex page in cr2)
+          ts->_trapno = 13;
+          ts->_err = 0;
         }
+    }
+  return 0; // fail
+}
+
+// ----------------------------------------------------------
+IMPLEMENTATION [io && no_io_pagefault]:
+
+PRIVATE inline
+int
+Thread::handle_io_page_fault(Trap_state *ts)
+{
+  Address eip = ts->ip();
+  if (!check_io_bitmap_delimiter_fault(ts))
+    return 0;
+
+  // Check for IO page faults. If we got exception #14, the IO bitmap page is
+  // not available. If we got exception #13, the IO bitmap is available but
+  // the according bit is set. In both cases we have to dispatch the code at
+  // the faulting eip to determine the IO port and send an IO flexpage to our
+  // pager. If it was a page fault, check the faulting address to prevent
+  // touching userland.
+  if (eip <= Mem_layout::User_max &&
+      ((ts->_trapno == 13 && (ts->_err & 7) == 0) ||
+       (ts->_trapno == 14 && Kmem::is_io_bitmap_page_fault(ts->_cr2))))
+    {
+      ts->_cr2 = 0;
+      ts->_trapno = 13;
+      ts->_err = 0;
+      _recover_jmpbuf = 0;
+      if (send_exception(ts))
+        return 1;
+      else
+        return 2; // fail, don't send exception again
     }
   return 0; // fail
 }

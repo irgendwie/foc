@@ -30,6 +30,7 @@ public:
 IMPLEMENTATION:
 
 #include <cstdio>
+#include <cstring>
 
 #include "kmem_alloc.h"
 #include "warn.h"
@@ -86,11 +87,20 @@ Boot_alloced::alloc(size_t size)
       rem->size = rem_sz;
       _free.replace(best, rem);
       if (Debug_boot_alloc)
-        printf("Boot_alloc: remaining free block @ %p (size=%lx)\n", rem, rem_sz);
+        printf("Boot_alloc: remaining free block @ %p (size=%lx)\n", rem, (unsigned long)rem_sz);
     }
   else
     _free.erase(best);
+
+  memset(b, 0, size);
   return b;
+}
+
+PUBLIC template<typename T> static
+T *
+Boot_alloced::allocate(size_t count = 1)
+{
+  return reinterpret_cast<T *>(alloc(count * sizeof(T)));
 }
 
 PUBLIC inline void *

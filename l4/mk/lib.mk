@@ -59,11 +59,18 @@ TARGET_PIC        := $(filter     %.p.a,$(TARGET_LIB))
 
 TARGET_STANDARD   := $(filter-out $(TARGET_SHARED) $(TARGET_PIC), $(TARGET_LIB))
 
+$(call GENERATE_PER_TARGET_RULES,$(TARGET_STANDARD))
+$(call GENERATE_PER_TARGET_RULES,$(TARGET_PIC) $(TARGET_SHARED),.s)
+
 TARGET_PROFILE  := $(patsubst %.a,%.pr.a,\
 			$(filter $(BUILD_PROFILE),$(TARGET_STANDARD)))
 TARGET_PROFILE_SHARED := $(filter %.so,$(TARGET_PROFILE))
 TARGET_PROFILE_PIC := $(patsubst %.a,%.p.a,\
 			$(filter $(BUILD_PIC),$(TARGET_PROFILE)))
+
+$(call GENERATE_PER_TARGET_RULES,$(TARGET_PROFILE),.pr)
+$(call GENERATE_PER_TARGET_RULES,$(TARGET_PROFILE_PIC) $(TARGET_PROFILE_SHARED),.pr)
+
 TARGET	+= $(TARGET_$(OSYSTEM))
 TARGET	+= $(TARGET_PROFILE) $(TARGET_PROFILE_SHARED) $(TARGET_PROFILE_PIC)
 
@@ -71,7 +78,7 @@ TARGET	+= $(TARGET_PROFILE) $(TARGET_PROFILE_SHARED) $(TARGET_PROFILE_PIC)
 LDFLAGS += $(addprefix -L, $(PRIVATE_LIBDIR) $(PRIVATE_LIBDIR_$(OSYSTEM)) $(PRIVATE_LIBDIR_$@) $(PRIVATE_LIBDIR_$@_$(OSYSTEM)))
 LDFLAGS += $(addprefix -L, $(L4LIBDIR))
 LDFLAGS += $(LIBCLIBDIR)
-LDFLAGS_SO ?= -shared -nostdlib
+LDFLAGS_SO ?= -shared
 
 BID_LDFLAGS_FOR_LINKING_DYN_LD  = $(LDFLAGS)
 BID_LDFLAGS_FOR_GCC_DYN         = $(filter     -static -shared -nostdlib -Wl$(BID_COMMA)% -L% -l%,$(LDFLAGS))
@@ -81,15 +88,13 @@ BID_LDFLAGS_FOR_LINKING_DYN_GCC = $(addprefix -Wl$(BID_COMMA),$(BID_LDFLAGS_FOR_
 
 LDSCRIPT       = $(LDS_so)
 LDSCRIPT_INCR ?= /dev/null
-CRT0           = $(CRTI_so) $(CRTBEGIN_so) $(CRT1_so)
-CRTN           = $(CRTN_so)
 
 # install.inc eventually defines rules for every target
 include $(L4DIR)/mk/install.inc
 
 ifeq ($(NOTARGETSTOINSTALL),)
-PC_LIBS     ?= $(patsubst lib%.so,-l%,$(TARGET_SHARED) \
-               $(patsubst lib%.a,-l%,$(TARGET_STANDARD)))
+PC_LIBS     ?= $(sort $(patsubst lib%.so,-l%,$(TARGET_SHARED) \
+                      $(patsubst lib%.a,-l%,$(TARGET_STANDARD))))
 
 PC_FILENAME  ?= $(PKGNAME)
 PC_FILENAMES ?= $(PC_FILENAME)
@@ -105,37 +110,36 @@ PC_FILES_CONTENTS := $(strip $(foreach pcfile,$(PC_FILENAMES),\
   $(call get_cont,CONTRIB_INCDIR,$(pcfile)) \
   $(call get_cont,PC_LIBS,$(pcfile)) \
   $(call get_cont,REQUIRES_LIBS,$(pcfile)) \
-  $(call get_cont,PC_CFLAGS,$(pcfile))))
+  $(call get_cont,PC_CFLAGS,$(pcfile)) $(call get_cont,PC_EXTRA,$(pcfile))))
 
 ifneq ($(PC_FILES_CONTENTS),)
 
 # when adding something to generate_pcfile it must also be added to the
 # PC_FILES_CONTENTS above, otherwise PC files may not be generated
-$(OBJ_BASE)/pc/%.pc: $(GENERAL_D_LOC)
-	$(VERBOSE)$(call generate_pcfile,$*,$@,$(call get_cont,CONTRIB_INCDIR,$*),$(call get_cont,PC_LIBS,$*),$(call get_cont,REQUIRES_LIBS,$*),$(call get_cont,PC_CFLAGS,$*))
+$(patsubst %,$(OBJ_BASE)/pc/%.pc,$(PC_FILENAMES)):$(OBJ_BASE)/pc/%.pc: $(GENERAL_D_LOC)
+	@$(call GEN_MESSAGE,$(@F))
+	$(VERBOSE)$(call generate_pcfile,$*,$@,$(call get_cont,CONTRIB_INCDIR,$*),$(call get_cont,PC_LIBS,$*),$(call get_cont,REQUIRES_LIBS,$*),$(call get_cont,PC_CFLAGS,$*),$(call get_cont,PC_EXTRA,$*))
 
 all:: $(PC_FILES)
 
 endif
 endif
 
-DEPS	+= $(foreach file,$(TARGET), $(dir $(file)).$(notdir $(file)).d)
+DEPS	+= $(foreach file,$(TARGET), $(call BID_LINK_DEPS,$(file)))
 
 $(filter-out $(LINK_INCR) %.so %.o.a %.o.pr.a, $(TARGET)):%.a: $(OBJS)
 	@$(AR_MESSAGE)
 	$(VERBOSE)[ -d "$(dir $@)" ] || $(MKDIR) $(dir $@)
 	$(VERBOSE)$(RM) $@
-	$(VERBOSE)$(AR) crs $@ $(OBJS)
+	$(VERBOSE)$(AR) crs$(if $(filter %.thin.a,$@),T) $@ $(OBJS)
 	@$(BUILT_MESSAGE)
 
 # shared lib
-$(filter %.so, $(TARGET)):%.so: $(OBJS) $(CRTN) $(CRT0) $(CRTP) $(LIBDEPS)
+$(filter %.so, $(TARGET)):%.so: $(OBJS) $(LIBDEPS)
 	@$(LINK_SHARED_MESSAGE)
 	$(VERBOSE)[ -d "$(dir $@)" ] || $(MKDIR) $(dir $@)
-	$(VERBOSE)$(call MAKEDEP,$(LD)) $(LD) \
-	   -o $@ $(LDFLAGS_SO) $(addprefix -T,$(LDSCRIPT)) $(CRTP) \
-	   $(OBJS) $(REQUIRES_LIBS_LIST) $(LDFLAGS) \
-	   $(GCCLIB_SO) $(GCCLIB_EH) $(CRTN)
+	$(VERBOSE)$(call MAKEDEP,$(LD)) $(BID_LINK) -MD -MF $(call BID_link_deps_file,$@) -o $@ $(LDFLAGS_SO) \
+	  $(LDFLAGS) $(OBJS) $(addprefix -PC,$(REQUIRES_LIBS))
 	@$(BUILT_MESSAGE)
 
 # build an object file (which looks like a lib to a later link-call), which
@@ -146,7 +150,7 @@ $(LINK_INCR_TARGETS):%.a: $(OBJS) $(LIBDEPS) $(foreach x,$(LINK_INCR_TARGETS),$(
 	@$(LINK_PARTIAL_MESSAGE)
 	$(VERBOSE)[ -d "$(dir $@)" ] || $(MKDIR) $(dir $@)
 	$(VERBOSE)$(call MAKEDEP,$(LD)) $(LD) \
-	   -T$(LDSCRIPT_INCR) \
+	   -T $(LDSCRIPT_INCR) \
 	   -o $@ -r $(OBJS) $(LDFLAGS)
 	$(if $(LINK_INCR_ONLYGLOBSYM_$@)$(LINK_INCR_ONLYGLOBSYMFILE_$@), \
 	   $(VERBOSE)$(OBJCOPY) \

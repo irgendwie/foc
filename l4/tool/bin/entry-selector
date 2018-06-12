@@ -1,4 +1,4 @@
-#! /usr/bin/perl -W
+#! /usr/bin/perl -w
 #
 # (c) 2009-2011 Technische Universität Dresden
 # This file is part of TUD:OS and distributed under the terms of the
@@ -7,6 +7,9 @@
 #
 # Adam Lackorzynski <adam@os.inf.tu-dresden.de>
 #
+# Do not use 'perl -W' here, as with perl-5.20 we'll get
+# Use of uninitialized value in string ne at /usr/lib/..../perl/5.20/File/Spec/Unix.pm line 92.
+# Maybe sometime later we could use -W again?
 
 use strict;
 use File::Temp qw/tempfile/;
@@ -21,22 +24,29 @@ unless (defined $ARGV[1]) {
   exit 1;
 }
 
+system("dialog > /dev/null 2>&1");
+if ($?)
+  {
+    print "\nERROR: 'dialog' program not installed. Please install.\n\n";
+    exit 1;
+  }
+
 my @e = L4::ModList::get_entries($ARGV[1]);
 
 if ($ARGV[0] eq 'menu')
   {
     my ($tmpfd, $tmpfilename) = tempfile();
 
-    my $backtitle = '';
+    my $backtitle = '--menu ""';
     if (defined $ENV{BACKTITLE})
       {
         $backtitle = $ENV{BACKTITLE};
-        $backtitle =~ s/"/\\"/g;
-        $backtitle = "--backtitle \"$backtitle\"";
+        $backtitle =~ s/'/'\\''/g;
+        $backtitle = "--menu '$backtitle'";
       }
 
-    system("dialog $backtitle --title 'Entry selection' "
-        ." --menu 'Select entry to launch' 18 65 18 ".
+    system("dialog --visit-items --title 'Select entry to launch:' "
+        ." $backtitle -1 -1 0 ".
         join(' ', map { "$_ '$e[$_]'" } (0 .. $#e) )." 2> $tmpfilename");
 
     if ($?)

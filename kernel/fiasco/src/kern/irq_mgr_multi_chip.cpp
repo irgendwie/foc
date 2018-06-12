@@ -31,10 +31,8 @@ PUBLIC explicit
 template< unsigned Bits_per_chip >
 Irq_mgr_multi_chip<Bits_per_chip>::Irq_mgr_multi_chip(unsigned chips)
   : _nchips(chips),
-    _chips((Chip*)Boot_alloced::alloc(sizeof(Chip) * chips))
-{
-  memset(_chips, 0, sizeof(Chip) * chips);
-}
+    _chips(new Boot_object<Chip>[chips]())
+{}
 
 PUBLIC template< unsigned Bits_per_entry >
 Irq_mgr::Irq
@@ -62,7 +60,7 @@ Irq_mgr_multi_chip<Bits_per_entry>::add_chip(unsigned irq_base,
   unsigned idx = irq_base >> Bits_per_entry;
   unsigned num = (pins + (1UL << Bits_per_entry) - 1) >> Bits_per_entry;
 
-  unsigned mask = ~0UL;
+  unsigned mask = ~0U;
   while (mask & (pins - 1))
     mask <<= 1;
 

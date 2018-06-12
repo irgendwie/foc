@@ -127,7 +127,7 @@ private:
 /**
  * \brief encapsulation of RCU implementation.
  *
- * This calss aggregates per CPU data structures as well as the global
+ * This class aggregates per CPU data structures as well as the global
  * data structure for RCU and provides a common RCU interface.
  */
 class Rcu
@@ -191,7 +191,6 @@ IMPLEMENTATION:
 #include "cpu.h"
 #include "cpu_lock.h"
 #include "globals.h"
-#include "kdb_ke.h"
 #include "lock_guard.h"
 #include "mem.h"
 #include "static_init.h"

@@ -1,14 +1,15 @@
-INTERFACE [arm && pic_gic && zynq]:
+INTERFACE [arm && pic_gic && pf_zynq]:
 
 #include "gic.h"
+#include "initcalls.h"
 
 // ------------------------------------------------------------------------
-IMPLEMENTATION [arm && pic_gic && zynq]:
+IMPLEMENTATION [arm && pic_gic && pf_zynq]:
 
 #include "irq_mgr_multi_chip.h"
 #include "kmem.h"
 
-IMPLEMENT FIASCO_INIT
+PUBLIC static FIASCO_INIT
 void
 Pic::init()
 {
@@ -23,16 +24,8 @@ Pic::init()
   Irq_mgr::mgr = m;
 }
 
-IMPLEMENT inline
-Pic::Status Pic::disable_all_save()
-{ return 0; }
-
-IMPLEMENT inline
-void Pic::restore_all(Status)
-{}
-
 // ------------------------------------------------------------------------
-IMPLEMENTATION [arm && pic_gic && mp && zynq]:
+IMPLEMENTATION [arm && pic_gic && mp && pf_zynq]:
 
 PUBLIC static
 void Pic::init_ap(Cpu_number, bool resume)

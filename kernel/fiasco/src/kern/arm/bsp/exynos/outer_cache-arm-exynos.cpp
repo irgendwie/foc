@@ -1,4 +1,4 @@
-IMPLEMENTATION [arm && exynos && outer_cache_l2cxx0]:
+IMPLEMENTATION [arm && pf_exynos && arm_cache_l2cxx0]:
 
 #include "cpu.h"
 #include "platform.h"
@@ -50,7 +50,7 @@ Outer_cache::platform_init(Mword auxc)
   return (auxc & auxc_mask) | auxc_bits;
 }
 
-IMPLEMENT
+IMPLEMENT_OVERRIDE
 void
 Outer_cache::platform_init_post()
 {

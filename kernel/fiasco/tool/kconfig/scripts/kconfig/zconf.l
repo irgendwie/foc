@@ -52,7 +52,7 @@ static void append_string(const char *str, int size)
 	if (new_size > text_asize) {
 		new_size += START_STRSIZE - 1;
 		new_size &= -START_STRSIZE;
-		text = realloc(text, new_size);
+		text = xrealloc(text, new_size);
 		text_asize = new_size;
 	}
 	memcpy(text + text_size, str, size);
@@ -66,9 +66,16 @@ static void alloc_string(const char *str, int size)
 	memcpy(text, str, size);
 	text[size] = 0;
 }
+
+static void warn_ignored_character(char chr)
+{
+	fprintf(stderr,
+	        "%s:%d:warning: ignoring unsupported character '%c'\n",
+	        zconf_curname(), zconf_lineno(), chr);
+}
 %}
 
-n	[A-Za-z0-9_]
+n	[A-Za-z0-9_-]
 
 %%
 	int str = 0;
@@ -99,14 +106,14 @@ n	[A-Za-z0-9_]
 		current_pos.file = current_file;
 		current_pos.lineno = current_file->lineno;
 		if (id && id->flags & TF_COMMAND) {
-			zconflval.id = id;
+			yylval.id = id;
 			return id->token;
 		}
 		alloc_string(yytext, yyleng);
-		zconflval.string = text;
+		yylval.string = text;
 		return T_WORD;
 	}
-	.
+	.	warn_ignored_character(*yytext);
 	\n	{
 		BEGIN(INITIAL);
 		current_file->lineno++;
@@ -122,26 +129,30 @@ n	[A-Za-z0-9_]
 	"!"	return T_NOT;
 	"="	return T_EQUAL;
 	"!="	return T_UNEQUAL;
+	"<="	return T_LESS_EQUAL;
+	">="	return T_GREATER_EQUAL;
+	"<"	return T_LESS;
+	">"	return T_GREATER;
 	\"|\'	{
 		str = yytext[0];
 		new_string();
 		BEGIN(STRING);
 	}
 	\n	BEGIN(INITIAL); current_file->lineno++; return T_EOL;
-	---	/* ignore */
-	({n}|[-/.])+	{
+	({n}|[/.])+	{
 		const struct kconf_id *id = kconf_id_lookup(yytext, yyleng);
 		if (id && id->flags & TF_PARAM) {
-			zconflval.id = id;
+			yylval.id = id;
 			return id->token;
 		}
 		alloc_string(yytext, yyleng);
-		zconflval.string = text;
+		yylval.string = text;
 		return T_WORD;
 	}
 	#.*	/* comment */
 	\\\n	current_file->lineno++;
-	.
+	[[:blank:]]+
+	.	warn_ignored_character(*yytext);
 	<<EOF>> {
 		BEGIN(INITIAL);
 	}
@@ -150,7 +161,7 @@ n	[A-Za-z0-9_]
 <STRING>{
 	[^'"\\\n]+/\n	{
 		append_string(yytext, yyleng);
-		zconflval.string = text;
+		yylval.string = text;
 		return T_WORD_QUOTE;
 	}
 	[^'"\\\n]+	{
@@ -158,7 +169,7 @@ n	[A-Za-z0-9_]
 	}
 	\\.?/\n	{
 		append_string(yytext + 1, yyleng - 1);
-		zconflval.string = text;
+		yylval.string = text;
 		return T_WORD_QUOTE;
 	}
 	\\.?	{
@@ -167,13 +178,15 @@ n	[A-Za-z0-9_]
 	\'|\"	{
 		if (str == yytext[0]) {
 			BEGIN(PARAM);
-			zconflval.string = text;
+			yylval.string = text;
 			return T_WORD_QUOTE;
 		} else
 			append_string(yytext, 1);
 	}
 	\n	{
-		printf("%s:%d:warning: multi-line strings not supported\n", zconf_curname(), zconf_lineno());
+		fprintf(stderr,
+			"%s:%d:warning: multi-line strings not supported\n",
+			zconf_curname(), zconf_lineno());
 		current_file->lineno++;
 		BEGIN(INITIAL);
 		return T_EOL;
@@ -250,7 +263,7 @@ void zconf_starthelp(void)
 
 static void zconf_endhelp(void)
 {
-	zconflval.string = text;
+	yylval.string = text;
 	BEGIN(INITIAL);
 }
 
@@ -283,7 +296,7 @@ void zconf_initscan(const char *name)
 {
 	yyin = zconf_fopen(name);
 	if (!yyin) {
-		printf("can't find file %s\n", name);
+		fprintf(stderr, "can't find file %s\n", name);
 		exit(1);
 	}
 
@@ -304,8 +317,8 @@ void zconf_nextfile(const char *name)
 	current_buf->state = YY_CURRENT_BUFFER;
 	yyin = zconf_fopen(file->name);
 	if (!yyin) {
-		printf("%s:%d: can't open file \"%s\"\n",
-		    zconf_curname(), zconf_lineno(), file->name);
+		fprintf(stderr, "%s:%d: can't open file \"%s\"\n",
+			zconf_curname(), zconf_lineno(), file->name);
 		exit(1);
 	}
 	yy_switch_to_buffer(yy_create_buffer(yyin, YY_BUF_SIZE));
@@ -314,20 +327,17 @@ void zconf_nextfile(const char *name)
 
 	for (iter = current_file->parent; iter; iter = iter->parent ) {
 		if (!strcmp(current_file->name,iter->name) ) {
-			printf("%s:%d: recursive inclusion detected. "
-			       "Inclusion path:\n  current file : '%s'\n",
-			       zconf_curname(), zconf_lineno(),
-			       zconf_curname());
-			iter = current_file->parent;
-			while (iter && \
-			       strcmp(iter->name,current_file->name)) {
-				printf("  included from: '%s:%d'\n",
-				       iter->name, iter->lineno-1);
+			fprintf(stderr,
+				"%s:%d: recursive inclusion detected. "
+				"Inclusion path:\n  current file : '%s'\n",
+				zconf_curname(), zconf_lineno(),
+				zconf_curname());
+			iter = current_file;
+			do {
 				iter = iter->parent;
-			}
-			if (iter)
-				printf("  included from: '%s:%d'\n",
-				       iter->name, iter->lineno+1);
+				fprintf(stderr, "  included from: '%s:%d'\n",
+					iter->name, iter->lineno - 1);
+			} while (strcmp(iter->name, current_file->name));
 			exit(1);
 		}
 	}

@@ -18,6 +18,7 @@ BUILD_OBJECTS=true
 
 include $(srcdir)/Makeconf	# also reads srcdir/Makeconf.local
                                 # and        objdir/Makeconf.local
+include globalconfig.tags
 include $(MODULES_FILE)
 include .Modules.deps
 
@@ -42,7 +43,7 @@ $(OBJS): .Compiler-config
 
 ifeq ("$(CONFIG_MAINTAINER_MODE)","y")
 
-do-all: Checkinitcalls Circular-ok ToDoItems compilertest $(ALL)
+do-all: Checkinitcalls Circular-ok ToDoItems $(ALL)
 ifeq ($(CONFIG_XARCH),ux)
 # disabled until unittests fixed
 #do-all: unittest
@@ -50,49 +51,29 @@ endif # UX
 
 else  # ! maintainer mode
 
-do-all: compilertest $(ALL)
+do-all: $(ALL)
 
 endif # ! maintainer mode
 
-ifeq ($(CC_TYPE),gcc)
-  ifneq ($(findstring $(CCVER_MAJOR),4 5 6 7),)
-    ifeq ($(CCVER_MAJOR),4)
-      CC_OK := $(if $(findstring $(CCVER_MINOR),0 1 2 3),,y)
-    else
-      CC_OK := y
-    endif
-  endif
-endif
-
-compilertest:
-ifeq ($(CC_TYPE),gcc)
-ifeq ($(CC_OK),)
-	@$(ECHO_E) "\033[31m\n" \
-	"  ERROR: gcc version "$(CCVER_MAJOR).$(CCVER_MINOR)" is not supported for "\
-	"Fiasco -- \n"\
-	"          please update gcc to at least version 4.4.\033[m\n"; exit 1
-endif
-endif
-ifeq ($(CC_TYPE),clang)
-ifeq ($(CC_OK),not-yet)
-	@$(ECHO_E) "\033[31m\n" \
-	"  ERROR: clang version "$(CCVER_MAJOR).$(CCVER_MINOR)" is not supported for "\
-	"Fiasco -- \n"\
-	"          please update clang to at least version ?.?.\033[m\n"; exit 1
-endif
-endif
 
 Checkinitcalls: $(KERNEL) $(OBJ_KERNEL)
-ifneq ($(shell $(CXX) -dumpversion | cut -d . -f1-2),3.4)
 	@echo "Checking initcalls"
 	$(VERBOSE)$(srcdir)/../tool/checkinitcalls \
-	  -k fiasco.image \
-	  -Werror $(filter-out fiasco.image, $^) \
-	  $(if $(SYSTEM_TARGET),-t $(SYSTEM_TARGET)) && \
+	  -k fiasco.debug \
+	  -Werror $(filter-out fiasco.debug, $^) \
+	  $(if $(CROSS_COMPILE),-t $(CROSS_COMPILE)) && \
 	echo "Initcalls OK"
-else
-	@echo "Initcall check disabled due to gcc-3.4"
-endif
+
+TOOL_GDB_DIR=$(srcdir)/../tool/gdb
+GDB ?= gdb-multiarch
+
+gdb: fiasco
+	$(VERBOSE)FIASCO_TOOL_GDB_DIR=$(TOOL_GDB_DIR) \
+	 $(GDB) -x $(TOOL_GDB_DIR)/interactive.gdb fiasco
+
+gen_ktrace_events.h: fiasco
+	$(VERBOSE)FIASCO_TOOL_GDB_DIR=$(TOOL_GDB_DIR) \
+	 $(GDB) --batch -x $(TOOL_GDB_DIR)/gen_ktrace_events.gdb fiasco
 
 ToDoItems:
 	@files=$$(cd $(srcdir) &&                                            \
@@ -192,7 +173,7 @@ DEPS.dot: $(KERNEL_MODULES_CPP)
 # enforce that all $(DEPS) are made before this target, because the
 # Makefile contains "-include $(DEPS)" (which can result in Circular
 # being created/updated before all $(DEPS) are).  Therefore, depend on
-# the fiasco.image and on main (not with Fiasco-UX). Once this is made,
+# the fiasco.debug and on main (not with Fiasco-UX). Once this is made,
 # we know all $(DEPS) have been updated.
 Circular: $(KERNEL) $(BOOT) $(RUN_TESTS) $(CHECKSUM)
 	@echo "Creating $@"

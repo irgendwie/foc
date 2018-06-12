@@ -57,30 +57,7 @@ private:
       return Attr(r, t);
     }
 
-    bool add_attribs(Page::Attr attr)
-    {
-      typedef L4_fpage::Rights R;
-
-      if (attr.rights & R::WX())
-        {
-          Unsigned64 a = 0;
-          if (attr.rights & R::W())
-            a = 2;
-
-          if (attr.rights & R::X())
-            a |= 4;
-
-          auto p = access_once(e);
-          auto o = p;
-          p |= a;
-          if (o != p)
-            {
-              write_now(e, p);
-              return true;
-            }
-        }
-      return false;
-    }
+    Unsigned64 entry() const { return *e; }
 
     void set_next_level(Unsigned64 phys)
     { set(phys | 7); }
@@ -106,7 +83,7 @@ private:
         *e &= ~dr;
     }
 
-    void create_page(Phys_mem_addr addr, Page::Attr attr)
+    Unsigned64 make_page(Phys_mem_addr addr, Page::Attr attr)
     {
       typedef L4_fpage::Rights R;
       typedef Page::Type T;
@@ -120,7 +97,12 @@ private:
       if (attr.type == T::Buffered()) r |= 1 << 3;
       if (attr.type == T::Uncached()) r |= 0;
 
-      set(cxx::int_value<Phys_mem_addr>(addr) | r);
+      return cxx::int_value<Phys_mem_addr>(addr) | r;
+    }
+
+    void set_page(Unsigned64 p)
+    {
+      set(p);
     }
 
   };
@@ -132,7 +114,7 @@ private:
 
   typedef Ptab::Shift<Ept_traits, 12>::List Ept_traits_vpn;
   typedef Ptab::Page_addr_wrap<Page_number, 12> Ept_va_vpn;
-  typedef Ptab::Base<Epte_ptr, Ept_traits_vpn, Ept_va_vpn> Ept;
+  typedef Ptab::Base<Epte_ptr, Ept_traits_vpn, Ept_va_vpn, Mem_layout> Ept;
 
   Mword _ept_phys;
   Ept *_ept;
@@ -183,7 +165,7 @@ static Mem_space::Fit_size::Size_array __ept_ps;
 
 PUBLIC
 Mem_space::Fit_size
-Vm_vmx_ept::mem_space_fitting_sizes() const
+Vm_vmx_ept::mem_space_fitting_sizes() const override
 { return Mem_space::Fit_size(__ept_ps); }
 
 PUBLIC static
@@ -198,7 +180,8 @@ Vm_vmx_ept::add_page_size(Mem_space::Page_order o)
 PUBLIC
 bool
 Vm_vmx_ept::v_lookup(Mem_space::Vaddr virt, Mem_space::Phys_addr *phys,
-                     Mem_space::Page_order *order, Mem_space::Attr *page_attribs)
+                     Mem_space::Page_order *order,
+                     Mem_space::Attr *page_attribs) override
 {
   auto i = _ept->walk(virt);
   if (order) *order = Mem_space::Page_order(i.page_order());
@@ -215,14 +198,15 @@ Vm_vmx_ept::v_lookup(Mem_space::Vaddr virt, Mem_space::Phys_addr *phys,
 PUBLIC
 Mem_space::Status
 Vm_vmx_ept::v_insert(Mem_space::Phys_addr phys, Mem_space::Vaddr virt,
-                     Mem_space::Page_order size, Mem_space::Attr page_attribs)
+                     Mem_space::Page_order size,
+                     Mem_space::Attr page_attribs) override
 {
   // insert page into page table
 
   // XXX should modify page table using compare-and-swap
 
-  assert (cxx::get_lsb(Mem_space::Phys_addr(phys), size) == 0);
-  assert (cxx::get_lsb(Virt_addr(virt), size) == 0);
+  assert (cxx::is_zero(cxx::get_lsb(Mem_space::Phys_addr(phys), size)));
+  assert (cxx::is_zero(cxx::get_lsb(Virt_addr(virt), size)));
 
   int level;
   for (level = 0; level <= Ept::Depth; ++level)
@@ -239,16 +223,19 @@ Vm_vmx_ept::v_insert(Mem_space::Phys_addr phys, Mem_space::Vaddr virt,
                    && (i.level != level || Mem_space::Phys_addr(i.page_addr()) != phys)))
     return Mem_space::Insert_err_exists;
 
+  auto entry = i.make_page(phys, page_attribs);
+
   if (i.is_valid())
     {
-      if (EXPECT_FALSE(!i.add_attribs(page_attribs)))
+      if (EXPECT_FALSE(i.entry() == entry))
         return Mem_space::Insert_warn_exists;
 
+      i.set_page(entry);
       return Mem_space::Insert_warn_attrib_upgrade;
     }
   else
     {
-      i.create_page(phys, page_attribs);
+      i.set_page(entry);
       return Mem_space::Insert_ok;
     }
 
@@ -257,10 +244,10 @@ Vm_vmx_ept::v_insert(Mem_space::Phys_addr phys, Mem_space::Vaddr virt,
 PUBLIC
 L4_fpage::Rights
 Vm_vmx_ept::v_delete(Mem_space::Vaddr virt, Mem_space::Page_order size,
-                     L4_fpage::Rights page_attribs)
+                     L4_fpage::Rights page_attribs) override
 {
   (void)size;
-  assert (cxx::get_lsb(Virt_addr(virt), size) == 0);
+  assert (cxx::is_zero(cxx::get_lsb(Virt_addr(virt), size)));
 
   auto i = _ept->walk(virt);
 
@@ -285,7 +272,7 @@ Vm_vmx_ept::v_delete(Mem_space::Vaddr virt, Mem_space::Page_order size,
 
 PUBLIC
 void
-Vm_vmx_ept::v_set_access_flags(Mem_space::Vaddr, L4_fpage::Rights)
+Vm_vmx_ept::v_set_access_flags(Mem_space::Vaddr, L4_fpage::Rights) override
 {}
 
 PUBLIC inline
@@ -302,7 +289,7 @@ void
 Vm_vmx_ept::operator delete (void *ptr)
 {
   Vm_vmx_ept *t = reinterpret_cast<Vm_vmx_ept*>(ptr);
-  allocator<Vm_vmx_ept>()->q_free(t->ram_quota(), ptr);
+  Kmem_slab_t<Vm_vmx_ept>::q_free(t->ram_quota(), ptr);
 }
 
 PUBLIC inline
@@ -342,7 +329,7 @@ void
 Vm_vmx_ept::load_vm_memory(void *src)
 {
   load(Vmx::F_guest_cr3, src);
-  Vmx::vmwrite(0x201a, _ept_phys | 6 | (3 << 3));
+  Vmx::vmwrite(Vmx::F_ept_ptr, _ept_phys | 6 | (3 << 3));
 }
 
 PUBLIC inline
@@ -356,11 +343,21 @@ PUBLIC static
 void
 Vm_vmx_ept::init()
 {
-
-  printf("VMX: init page sizes\n");
-  if (!Vmx::cpus.cpu(Cpu_number::boot_cpu()).vmx_enabled())
+  auto const &vmx = Vmx::cpus.cpu(Cpu_number::boot_cpu());
+  if (!vmx.vmx_enabled())
     return;
 
+  if (!vmx.info.procbased_ctls2.allowed(Vmx_info::PRB2_enable_ept))
+    {
+      Kobject_iface::set_factory(L4_msg_tag::Label_vm,
+                                 Task::generic_factory<Vm_vmx>);
+      return;
+    }
+
+  Kobject_iface::set_factory(L4_msg_tag::Label_vm,
+                             Task::generic_factory<Vm_vmx_ept>);
+
+  printf("VMX: init page sizes\n");
   add_page_size(Mem_space::Page_order(12));
   add_page_size(Mem_space::Page_order(21));
   add_page_size(Mem_space::Page_order(30));

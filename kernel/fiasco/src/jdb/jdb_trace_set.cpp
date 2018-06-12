@@ -46,6 +46,7 @@ Jdb_set_trace::action(int cmd, void *&args, char const *&fmt, int &)
 	    {
 	    case ' ':
 	    case KEY_RETURN:
+	    case KEY_RETURN_2:
 	      first_char = ' '; // print status
 	      break;
 	    case '+': // on
@@ -156,6 +157,7 @@ Jdb_set_trace::action(int cmd, void *&args, char const *&fmt, int &)
 	    {
 	    case ' ':
 	    case KEY_RETURN:
+	    case KEY_RETURN_2:
 	      first_char = ' '; // print status
 	      break;
 	    case '+': // on
@@ -242,7 +244,7 @@ Jdb_set_trace::cmds() const
 	  &first_char },
 	{ 1, "P", "P", "%C",
 	  "P{+|-|*}\ton/off/buffer pagefault logging\n"
-	  "Pr{t|T|x|-}\trestrict pagefault log to (!)thread/!thread/addr/clr",
+	  "Pr{t|T|x|-}\trestrict pagefault log to (!)thread/addr/clr",
 	  &first_char },
     };
 
