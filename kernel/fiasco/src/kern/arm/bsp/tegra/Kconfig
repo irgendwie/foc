@@ -1,6 +1,5 @@
 # PF: TEGRA
 # PFDESCR: NVIDIA Tegra platform
-# PFSELECT: CAN_ARM_CPU_CORTEX_A9 CAN_ARM_CACHE_L2CXX0
 # PFDEPENDS: ARM
 
 choice
@@ -9,10 +8,19 @@ choice
 
 config PF_TEGRA2
 	bool "Tegra2"
+	select CAN_ARM_CPU_CORTEX_A9
+	select CAN_ARM_CACHE_L2CXX0
 	depends on PF_TEGRA
 
 config PF_TEGRA3
 	bool "Tegra3"
+	select CAN_ARM_CPU_CORTEX_A9
+	select CAN_ARM_CACHE_L2CXX0
+	depends on PF_TEGRA
+
+config PF_TEGRAK1
+	bool "TegraK1"
+	select CAN_ARM_CPU_CORTEX_A15
 	depends on PF_TEGRA
 
 endchoice

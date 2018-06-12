@@ -14,6 +14,7 @@ SUPPORT_CC_arm-pandaboard      := platform/omap.cc
 SUPPORT_CC_arm-omap5           := platform/omap.cc
 SUPPORT_CC_arm-tegra2          := platform/tegra2.cc
 SUPPORT_CC_arm-tegra3          := platform/tegra3.cc
+SUPPORT_CC_arm-tegrak1         := platform/tegrak1.cc
 SUPPORT_CC_arm-imx21           := platform/imx.cc
 SUPPORT_CC_arm-imx28           := platform/imx.cc
 SUPPORT_CC_arm-ls1021atwr      := platform/ls1021atwr.cc
