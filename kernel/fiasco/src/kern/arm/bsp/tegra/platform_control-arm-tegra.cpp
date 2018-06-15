@@ -19,7 +19,7 @@ private:
   static Mword _orig_reset_vector;
 };
 
-INTERFACE [arm && mp && tegra3]:
+INTERFACE [arm && mp && (tegra3 || tegrak1)]:
 
 EXTENSION class Platform_control
 {
@@ -55,7 +55,7 @@ Platform_control::init_cpus()
 }
 
 // ------------------------------------------------------------------------
-IMPLEMENTATION [arm && mp && tegra3]:
+IMPLEMENTATION [arm && mp && (tegra3 || tegrak1)]:
 
 #include "io.h"
 #include "mem.h"

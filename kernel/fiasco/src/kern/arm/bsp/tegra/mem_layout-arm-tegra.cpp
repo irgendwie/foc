@@ -1,4 +1,4 @@
-INTERFACE [arm && pf_tegra && !pf_tegrak1]:
+INTERFACE [arm && tegra && !tegrak1]:
 
 EXTENSION class Mem_layout
 {
@@ -19,7 +19,7 @@ public:
   };
 };
 
-INTERFACE [arm && pf_tegra && pf_tegrak1]:
+INTERFACE [arm && tegra && tegrak1]:
 
 EXTENSION class Mem_layout
 {
