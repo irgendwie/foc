@@ -18,7 +18,6 @@ enum
   KEY_INSERT		= 0xb0,
   KEY_DELETE		= 0xae,
   KEY_F1		= 0xc0,
-  KEY_SINGLE_ESC	= 0x101,
 };
 
 #endif // KEYCODES_H__

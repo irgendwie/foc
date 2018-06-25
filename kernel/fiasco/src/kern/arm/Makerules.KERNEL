@@ -30,23 +30,21 @@ bootstrap.$(KERNEL).o: bootstrap.$(KERNEL).pre.o
 	$(LINK_MESSAGE)
 	$(VERBOSE)$(OBJCOPY) $(bootstrap_strip) $< $@
 
-$(KERNEL).debug: kernel.arm.lds $(CRT0) bootstrap.$(KERNEL).o $(OBJ_KERNEL_noboot) $(JDB) $(LIBK) $(KERNEL_EXTRA_LIBS) $(LIBDISASM) $(ABI) libdrivers.a $(LIBUART) $(CXXLIB) $(MINILIBC) $(LIBGCC) $(MINILIBC) libgluedriverslibc.a
+$(KERNEL).image: kernel.arm.lds $(CRT0) bootstrap.$(KERNEL).o $(OBJ_KERNEL_noboot) $(JDB) $(LIBK) $(KERNEL_EXTRA_LIBS) $(LIBDISASM) $(ABI) libdrivers.a $(LIBUART) $(CXXLIB) $(MINILIBC) $(LIBGCC) $(MINILIBC) libgluedriverslibc.a
 	$(LINK_MESSAGE)
 	$(VERBOSE)$(LD) $(LDFLAGS) -m $(LD_EMULATION) $(KERNEL_LDFLAGS) -N -defsym kernel_load_addr=$(CONFIG_KERNEL_LOAD_ADDR) \
           -T $< -o $@ $(filter-out $<,$+)
 	$(call ADD_CONFIGFILE,$@)
 
-# Remove '$(RM) fiasco.image' after a transition period -- Added late 2016
-$(KERNEL): $(KERNEL).debug
+$(KERNEL): $(KERNEL).image
 	$(LINK_MESSAGE)
 	$(VERBOSE)$(STRIP) $< -o $@
 	$(VERBOSE)$(OBJCOPY) --add-gnu-debuglink=$< $@
 	$(VERBOSE)chmod 755 $@
-	$(VERBOSE)$(RM) fiasco.image
 
-Symbols: $(KERNEL).debug
+Symbols: $(KERNEL).image
 	$(COMP_MESSAGE)
-	$(VERBOSE)$(NM) $(KERNEL).debug | c++filt | sort > $@.new
+	$(VERBOSE)$(NM) $(KERNEL).image | c++filt | sort > $@.new
 	$(VERBOSE)mv $@.new $@
 	$(VERBOSE)chmod 644 $@
 
