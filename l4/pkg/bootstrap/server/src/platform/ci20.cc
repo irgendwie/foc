@@ -24,12 +24,33 @@ public:
 
   void init()
   {
-    unsigned long uart_base;
-
     kuart.base_baud    = 3000000;
-    kuart.base_address = 0x10034000; // UART4
     kuart.reg_shift    = 2;
-    kuart.irqno        = 34;
+
+    switch (PLATFORM_UART_NR)
+      {
+      case 0:
+        kuart.base_address = 0x10030000;
+        kuart.irqno        = 51;
+        break;
+      case 1:
+        kuart.base_address = 0x10031000;
+        kuart.irqno        = 50;
+        break;
+      case 2:
+        kuart.base_address = 0x10032000;
+        kuart.irqno        = 49;
+        break;
+      case 3:
+        kuart.base_address = 0x10033000;
+        kuart.irqno        = 48;
+        break;
+      default:
+      case 4:
+        kuart.base_address = 0x10034000;
+        kuart.irqno        = 34;
+        break;
+      }
 
     static L4::Uart_16550 _uart(kuart.base_baud, 0, 0, 0, 0x10 /* FCR UME */);
     static L4::Io_register_block_mmio r(kuart.base_address + Mips::KSEG1,
@@ -48,14 +69,9 @@ public:
 
   void setup_memory_map()
   {
-    // let the base class scan for RAM
-    Platform_single_region_ram::setup_memory_map();
-
-    // reserve @ 0x0000       : first page containing exception base
-    // reserve @ 0x0f00-0x1000: SMP cpulaunch structures to prevent launch flags
-    // being zeroed by bootstrap -presetmem=0 command line arguement
-    // mem_manager->regions->add(Region::n(0, L4_PAGESIZE, ".kernel_resv",
-    //                                    Region::Kernel));
+    mem_manager->ram->add(Region(0x0,        0x0fffffff, ".ram", Region::Ram));
+    // Note, the first 256MB are mirrored at 0x20000000
+    mem_manager->ram->add(Region(0x30000000, 0x5fffffff, ".ram", Region::Ram));
   }
 
   l4_uint64_t to_phys(l4_addr_t bootstrap_addr)

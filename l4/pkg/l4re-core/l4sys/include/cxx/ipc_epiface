@@ -1,4 +1,4 @@
-// vi:ft=cpp
+// vi:set ft=cpp: -*- Mode: C++ -*-
 /*
  * (c) 2014-2015 Alexander Warg <alexander.warg@kernkonzept.com>
  *
@@ -25,11 +25,13 @@
 #include <l4/sys/utcb.h>
 #include <l4/sys/__typeinfo.h>
 #include <l4/sys/meta>
+#include <l4/cxx/type_traits>
 
 namespace L4 {
 
 // forward for Irqep_t
 class Irq;
+class Rcv_endpoint;
 
 namespace Ipc_svr {
 
@@ -216,7 +218,7 @@ struct Epiface
    *                 the capability was internally allocated or not.
    * \return 0 on success, -L4_EINVAL if the srv and cap are not consistent.
    */
-  int set_server(Server_iface *srv, Cap<Kobject> cap, bool managed = false)
+  int set_server(Server_iface *srv, Cap<void> cap, bool managed = false)
   {
     if ((srv && cap) || (!srv && !cap))
       {
@@ -258,8 +260,26 @@ struct Epiface_t0 : BASE
   { return L4::cap_cast<RPC_IFACE>(BASE::obj_cap()); }
 };
 
-template<typename Derived, typename BASE = Epiface>
-struct Irqep_t : Epiface_t0<Kobject, BASE>
+template<typename Derived, typename BASE = Epiface,
+         bool = cxx::is_polymorphic<BASE>::value>
+struct Irqep_t : Epiface_t0<void, BASE>
+{
+  l4_msgtag_t dispatch(l4_msgtag_t, unsigned, l4_utcb_t *) final
+  {
+    static_cast<Derived*>(this)->handle_irq();
+    return l4_msgtag(-L4_ENOREPLY, 0, 0, 0);
+  }
+
+  /**
+   * Get the (typed) capability to this object.
+   * \return Capability for the kernel object behind the server.
+   */
+  Cap<L4::Irq> obj_cap() const
+  { return L4::cap_cast<L4::Irq>(BASE::obj_cap()); }
+};
+
+template<typename Derived, typename BASE>
+struct Irqep_t<Derived, BASE, false> : Epiface_t0<void, BASE>
 {
   l4_msgtag_t dispatch(l4_msgtag_t, unsigned, l4_utcb_t *)
   {
@@ -274,6 +294,103 @@ struct Irqep_t : Epiface_t0<Kobject, BASE>
   Cap<L4::Irq> obj_cap() const
   { return L4::cap_cast<L4::Irq>(BASE::obj_cap()); }
 };
+
+/**
+ * Abstract interface for object registries.
+ *
+ * An object registry allows to register L4::Epiface objects at a server
+ * loop either for synchronous RPC messages or for asynchronous IRQ
+ * messages.
+ */
+class Registry_iface
+{
+public:
+  virtual ~Registry_iface() = 0;
+
+  /**
+   * Register an L4::Epiface for an IPC gate available in the applications
+   * environment under the name `service`.
+   * \param o        Pointer to an Epiface object that shall be registered.
+   * \param service  Name of the capability that shall be used to connect
+   *                 `o` to as a server-side object.
+   * \retval L4::Cap<void> The capability known as `service` on success.
+   * \retval L4::Cap<void>::Invalid No capability with the given name found.
+   *
+   * After a successful call to this function `o->obj_cap()` is equal
+   * to the capability in the environment with the name given by `service`.
+   */
+  virtual L4::Cap<void>
+  register_obj(L4::Epiface *o, char const *service) = 0;
+
+  /**
+   * Register `o` as server-side object for synchronous RPC.
+   * \param o  Pointer to an Epiface object that shall be registered as
+   *           server-side object for RPC.
+   * \retval L4::Cap<void> A valid capability to a new IPC gate.
+   * \retval L4::Cap<void>::Invalid  The allocation of the IPC gate
+   *                                 has failed.
+   *
+   * After successful registration `o->obj_cap()` will be the capability
+   * of the allocated IPC gate.
+   *
+   * The function may allocate a capability slot for the object. In that
+   * case unregister_obj() is responsible for freeing the slot as well.
+   */
+  virtual L4::Cap<void>
+  register_obj(L4::Epiface *o) = 0;
+
+  /**
+   * Register `o` as server-side object for asynchronous IRQs.
+   * \param o  Pointer to an Epiface object that shall be registered as
+   *           server-side object for IRQs.
+   * \retval L4::Cap<L4::Irq>            Capability to a new IRQ object on success.
+   * \retval L4::Cap<L4::Irq>::Invalid  The allocation of the IRQ has failed.
+   *
+   * After successful registration `o->obj_cap()` will be the capability
+   * of the allocated IRQ object.
+   *
+   * The function may allocate a capability slot for the object. In that
+   * case unregister_obj() is responsible for freeing the slot as well.
+   */
+  virtual L4::Cap<L4::Irq> register_irq_obj(L4::Epiface *o) = 0;
+
+  /**
+   * Register `o` as server-side object for a pre-allocated capability.
+   * \param o    Pointer to an Epiface object that shall be registered as
+   *             server-side object.
+   * \param ep   Capability to an already allocated capability where `o`
+   *             shall be attached as server-side handler. The capability
+   *             may point to an IPC gate or an IRQ.
+   * \retval L4::Cap<L4::Rcv_endpoint>           Capability `ep` on success.
+   * \retval L4::Cap<L4::Rcv_endpoint>::Invalid  The IRQ attach operation has failed.
+   *
+   * After successful registration `o->obj_cap()` will be equal to `ep`.
+   */
+  virtual L4::Cap<L4::Rcv_endpoint>
+  register_obj(L4::Epiface *o, L4::Cap<L4::Rcv_endpoint> ep) = 0;
+
+  L4::Cap<L4::Irq>
+  register_irq_obj(L4::Epiface *o, L4::Cap<L4::Irq> irq)
+  L4_DEPRECATED("Use register_obj() instead")
+  { return cap_reinterpret_cast<L4::Irq>(register_obj(o, cap_reinterpret_cast<L4::Rcv_endpoint>(irq))); }
+
+  /**
+   * Unregister the given object `o` from the server.
+   * \param o      Pointer to the Epiface object that shall be unregistered.
+   *               The object must have been registered with any of the
+   *               register methods if Registry_iface.
+   * \param unmap  If true the capability `o->obj_cap()` shall be unmapped
+   *               from the local object space.
+   *
+   * The function always unmaps and frees the capability if it was
+   * allocated by either Registry_iface::register_irq_obj(L4::Epiface *),
+   * or by Registry_iface::register_obj(L4::Epiface *).
+   */
+  virtual void
+  unregister_obj(L4::Epiface *o, bool unmap = true) = 0;
+};
+
+inline Registry_iface::~Registry_iface() {}
 
 namespace Ipc {
 namespace Detail {
@@ -360,10 +477,24 @@ struct Dispatch : Detail::Dispatch<typename EPIFACE::Interface>
 
 } // namespace Ipc
 
-template<typename Derived, typename IFACE, typename BASE = L4::Epiface>
+
+template<typename Derived, typename IFACE, typename BASE = L4::Epiface,
+         bool = cxx::is_polymorphic<BASE>::value>
 struct Epiface_t : Epiface_t0<IFACE, BASE>
 {
-  l4_msgtag_t dispatch(l4_msgtag_t tag, unsigned rights, l4_utcb_t *utcb)
+  l4_msgtag_t
+  dispatch(l4_msgtag_t tag, unsigned rights, l4_utcb_t *utcb) final
+  {
+    typedef Ipc::Dispatch<Derived> Dispatch;
+    return Dispatch::f(static_cast<Derived*>(this), tag, rights, utcb);
+  }
+};
+
+template<typename Derived, typename IFACE, typename BASE>
+struct Epiface_t<Derived, IFACE, BASE, false> : Epiface_t0<IFACE, BASE>
+{
+  l4_msgtag_t
+  dispatch(l4_msgtag_t tag, unsigned rights, l4_utcb_t *utcb)
   {
     typedef Ipc::Dispatch<Derived> Dispatch;
     return Dispatch::f(static_cast<Derived*>(this), tag, rights, utcb);
@@ -403,12 +534,7 @@ public:
   static l4_msgtag_t dispatch(l4_msgtag_t tag, l4_umword_t label,
                               l4_utcb_t *utcb)
   {
-    Value *o = find(label);
-
-    if (!o)
-      return l4_msgtag(-L4_ENOENT, 0, 0, 0);
-
-    return o->dispatch(tag, label, utcb);
+    return find(label)->dispatch(tag, label, utcb);
   }
 };
 

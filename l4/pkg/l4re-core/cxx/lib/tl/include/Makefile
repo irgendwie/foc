@@ -18,6 +18,7 @@ EXTRA_TARGET := \
   ref_ptr     \
   slab_alloc  \
   static_container \
+  static_vector \
   std_alloc   \
   std_ops     \
   type_traits \
@@ -25,6 +26,8 @@ EXTRA_TARGET := \
   bitfield \
   unique_ptr \
   utils       \
-  weak_ref
+  weak_ref   \
+  unique_ptr_list \
+  ref_ptr_list
 
 include $(L4DIR)/mk/include.mk

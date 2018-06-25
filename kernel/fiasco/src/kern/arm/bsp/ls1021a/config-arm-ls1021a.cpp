@@ -1,3 +1,0 @@
-INTERFACE [arm && ls1021a]:
-
-#define TARGET_NAME "NXP LS1021A"

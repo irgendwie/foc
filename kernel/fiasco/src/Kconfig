@@ -61,7 +61,6 @@ config IA32
 
 config AMD64
 	bool "AMD64 processor family"
-	select CONTEXT_8K
 	select HAS_VIRT_OBJ_SPACE_OPTION
 	select HAS_JDB_DISASM_OPTION
 	select HAS_JDB_GZIP_OPTION
@@ -102,129 +101,6 @@ endchoice
 
 config ABI_VF
 	def_bool y
-
-choice
-	prompt "CPU"
-	depends on IA32 || AMD64 || UX
-	default IA32_686   if IA32
-	default AMD64_K8   if AMD64
-
-config IA32_486
-	bool "Intel 80486"
-	depends on IA32
-	help
-	  Choose this if you have an Intel 80486 or equivalent CPU (i486).
-
-config IA32_586
-	bool "Intel Pentium / AMD K5"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Pentium or compatible i586 CPU.
-
-config IA32_686
-	bool "Intel Pentium Pro"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Pentium Pro or compatible i686 CPU.
-
-config IA32_P2
-	bool "Intel Pentium II / Celeron II"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Pentium II or Pentium II based Celeron.
-
-config IA32_P3
-	bool "Intel Pentium III / Celeron III"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Pentium III or Pentium III based Celeron.
-
-config IA32_P4
-	bool "Intel Pentium 4 / Celeron 4"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Pentium 4 or Pentium 4 based Celeron.
-
-config IA32_PM
-	bool "Intel Pentium M"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Pentium M.
-
-config IA32_CORE2
-	bool "Intel Core 2"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Core 2.
-
-config IA32_CORE_I
-        bool "Intel Core-i"
-	depends on IA32
-	help
-	  Choose this if you want to optimize for Core-i class CPUs.
-
-config IA32_ATOM
-	bool "Intel Atom"
-	depends on IA32
-	help
-	  Choose this if you have an Intel Atom.
-
-config IA32_K6
-	bool "AMD K6 / K6-II / K6-III"
-	depends on IA32
-	help
-	  Choose this if you have an AMD K6 CPU.
-
-config IA32_K7
-	bool "AMD Athlon / Duron"
-	depends on IA32
-	help
-	  Choose this if you have an AMD Athlon or Duron CPU.
-
-config IA32_K8
-	bool "AMD Opteron / Athlon64"
-	depends on IA32
-	help
-	  Choose this if you have an AMD Opteron or Athlon64 CPU.
-
-config IA32_K10
-	bool "AMD Barcelona (K10)"
-	depends on IA32
-	help
-	  Choose this if you have an AMD Barcelona based CPU.
-
-
-config AMD64_K8
-	bool "AMD Opteron / Athlon64"
-	depends on AMD64
-	help
-	  Choose this if you have an AMD Opteron or Athlon64 CPU.
-
-config AMD64_CORE2
-	bool "Intel Core 2"
-	depends on AMD64
-	help
-	  Choose this if you have an Intel Core 2.
-
-config AMD64_CORE_I
-        bool "Intel Core-i"
-	depends on AMD64
-	help
-	  Choose this if you want to optimize for Core-i class CPUs.
-
-config AMD64_ATOM
-	bool "Intel Atom"
-	depends on AMD64
-	help
-	  Choose this if you have an Intel Atom.
-
-config AMD64_K10
-	bool "AMD Barcelona (K10)"
-	depends on AMD64
-	help
-	  Choose this if you have an AMD Barcelona based CPU.
-
-endchoice
 
 # PF_SECTION: CPU
 
@@ -400,7 +276,7 @@ config UX_NET
 
 choice 
 	prompt "Scheduler"
-	default FIXED_PRIO
+	default SCHED_FIXED_PRIO
 
 config SCHED_FIXED_PRIO
 	bool "Fixed priority scheduler"
@@ -442,6 +318,63 @@ config VIRT_OBJ_SPACE
 	def_bool y
 	depends on HAS_VIRT_OBJ_SPACE_OPTION
 	depends on !DISABLE_VIRT_OBJ_SPACE
+	depends on !KERNEL_ISOLATION
+
+config KERNEL_ISOLATION
+	bool "Enable Kernel Address-Space Isolation" if AMD64
+	depends on AMD64
+	select NO_LDT
+	select NO_IO_PAGEFAULT
+	select CPU_LOCAL_MAP
+	help
+	  Use an extra address space (page table) for the microkernel.
+	  Only map a small trampoline and some static code and data into
+	  each user address space and keep the kernel in its own address
+	  space. This mitigates the deferred access rights check of some
+	  Intel CPUs during speculative execution. However, there is the
+	  extra TLB penalty for each system call.
+
+config CPU_LOCAL_MAP
+	bool "Enable CPU local page-tables for kernel mappings" if AMD64 && !KERNEL_ISOLATION
+	depends on AMD64
+	help
+	  Enable to use per CPU page directories to allow CPU-local
+	  mapping of kernel memory. This is used for kernel isolation
+	  etc.
+	  
+	  If unsure say N.
+
+config INTEL_IA32_BRANCH_BARRIERS
+	bool "Enable strict prediction barriers (IBRS,IBPB,STIBP)" if AMD64 && KERNEL_ISOLATION
+	depends on AMD64 && KERNEL_ISOLATION
+	help
+	  Use indirect branch prediction barriers to prevent
+	  speculation-based cache timing side-channels.
+	  This option enables Intel specific indirect branch control
+	  mitigation:
+	    (a) IBRS on all kernel entries to prevent in-kernel
+	        prediction attacks.
+	    (b) STIBP to prevent cross hyper-thred attacks.
+	    (c) IBPB after address space switches to prevent cross
+	        application attacks.
+
+config NO_IO_PAGEFAULT
+	bool "Disable IO-Port fault IPC" if (IA32 || AMD64) && !KERNEL_ISOLATION
+	depends on IA32 || AMD64
+	default y if  IA32 || AMD64
+	help
+	  Disable page-fault IPC for IO-Port accesses. If this option is
+	  eanbled the kernel does not generate page-fault IPC for failed
+	  IO-Port accesses instead an excpetion IPC with a #GP is generated.
+
+config NO_LDT
+	bool "Disable support for the LDT" if (IA32 || AMD64) && !KERNEL_ISOLATION
+	depends on IA32 || AMD64
+	default y if IA32 || AMD64
+	help
+	  This option disables support for the X86 local descriptor
+	  table (LDT).  This reduces some overhead. However, this
+	  also makes the use of the LDT in L4Linux impossible.
 
 # PF_SECTION: KERNEL
 
@@ -663,12 +596,13 @@ config EXPERIMENTAL
 	  Use with caution!
 
 config PERF_CNT
-	def_bool y if JDB && (IA32 || AMD64 || ARM)
+	def_bool y if JDB && (IA32 || AMD64 || ARM || ARM64 || MIPS)
 
 config BIT32
 	bool
 
 config BIT64
+	select CONTEXT_8K
 	bool
 
 config WARN_LEVEL
@@ -683,22 +617,6 @@ config XARCH
 	default "amd64" if AMD64 && PF_PC
 	default "ia32" if IA32 && PF_PC
 # ARCH_NAME
-
-config IA32_TARGET
-	string
-	default "Intel 80486" if IA32_486
-	default "Intel Pentium" if IA32_586
-	default "Intel Pentium Pro" if IA32_686
-	default "Intel Pentium II" if IA32_P2
-	default "Intel Pentium III" if IA32_P3
-	default "Intel Pentium 4" if IA32_P4
-	default "Pentium M" if IA32_PM
-	default "AMD K6" if IA32_K6
-	default "AMD Athlon" if IA32_K7
-	default "Intel Core2" if IA32_CORE2 || AMD64_CORE2
-	default "Intel Core-i" if IA32_CORE_I || AMD64_CORE_I
-	default "Intel Atom" if IA32_ATOM || AMD64_ATOM
-	default "AMD Opteron" if IA32_K8 || AMD64_K8 || AMD64_K10 || IA32_K10
 
 config ABI
 	string

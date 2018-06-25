@@ -1,8 +1,3 @@
-INTERFACE [mips]:
-
-// empty: should generate a linker error when used
-bool cas2_unsafe(Mword *, Mword *, Mword *);
-
 IMPLEMENTATION [mips]:
 
 #include "asm_mips.h"
@@ -97,14 +92,6 @@ IMPLEMENTATION [mips && mp]:
 
 #include "mem.h"
 
-// empty: should generate a linker error when used
-template<typename W> inline
-bool mp_cas2_arch(void *, W, Mword, Mword, Mword)
-{
-  W::no_cas2 = 10; // trigger a compile error if cas2 is used
-  return false;
-}
-
 inline NEEDS["mem.h"]
 void
 atomic_mp_and(Mword *l, Mword value)
@@ -154,6 +141,11 @@ inline
 void
 atomic_mp_or(Mword *l, Mword value)
 { atomic_or(l, value); }
+
+inline
+void
+atomic_mp_add(Mword *l, Mword value)
+{ atomic_add(l, value); }
 
 inline
 bool

@@ -1,5 +1,7 @@
 //----------------------------------------------------------------------------
-IMPLEMENTATION [amd64]:
+IMPLEMENTATION [amd64 && !kernel_isolation]:
+
+#define FIASCO_ASM_IRET "iretq \n\t"
 
 PUBLIC template<typename T> inline
 void FIASCO_NORETURN
@@ -8,18 +10,51 @@ Thread::fast_return_to_user(Mword ip, Mword sp, T arg)
   assert(cpu_lock.test());
   assert(current() == this);
 
-  regs()->ip(ip);
-  regs()->sp(sp);
-  regs()->cs(Gdt::gdt_code_user | Gdt::Selector_user);
-  regs()->flags(EFLAGS_IF);
   asm volatile
-    ("mov %0, %%rsp \t\n"
-     "iretq         \t\n"
+    ("mov %[sp], %%rsp \t\n"
+     "mov %[flags], %%r11 \t\n"
+     "sysretq \t\n"
      :
-     : "r" (static_cast<Return_frame*>(regs())), "D"(arg)
+     : [flags] "i" (EFLAGS_IF), "c" (ip), [sp] "r" (sp), "D"(arg)
     );
   __builtin_trap();
 }
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION [amd64 && kernel_isolation]:
+
+#define FIASCO_ASM_IRET "jmp safe_iret \n\t"
+
+PUBLIC template<typename T> inline
+void FIASCO_NORETURN
+Thread::fast_return_to_user(Mword ip, Mword sp, T arg)
+{
+  assert(cpu_lock.test());
+  assert(current() == this);
+
+  Address *p = (Address *)Mem_layout::Kentry_cpu_page;
+
+#ifdef CONFIG_INTEL_IA32_BRANCH_BARRIERS
+  if (p[2] & 1)
+    {
+      p[2] &= ~1UL;
+      Cpu::wrmsr(0, 0, 0x49);
+    }
+#endif
+
+  asm volatile
+    ("mov %[sp], %%rsp \t\n"
+     "mov %[flags], %%r11 \t\n"
+     "jmp safe_sysret \t\n"
+     :
+     : [cr3] "a" (p[0] | 0x1000),
+       [flags] "i" (EFLAGS_IF), "c" (ip), [sp] "r" (sp), "D"(arg)
+    );
+  __builtin_trap();
+}
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION [amd64]:
 
 PROTECTED inline NEEDS[Thread::sys_gdt_x86]
 L4_msg_tag
@@ -50,6 +85,11 @@ Thread::invoke_arch(L4_msg_tag tag, Utcb *utcb)
         default: return commit_result(-L4_err::EInval);
         }
       return Kobject_iface::commit_result(0);
+    case Op_segment_info_amd64:
+      utcb->values[0] = Gdt::gdt_data_user   | Gdt::Selector_user; // user_ds32
+      utcb->values[1] = Gdt::gdt_code_user   | Gdt::Selector_user; // user_cs64
+      utcb->values[2] = Gdt::gdt_code_user32 | Gdt::Selector_user; // user_cs32
+      return Kobject_iface::commit_result(0, 3);
     default:
       return commit_result(-L4_err::ENosys);
     };
@@ -220,8 +260,7 @@ Thread::user_invoke()
      "  xor %%r13,%%r13 \n"
      "  xor %%r14,%%r14 \n"
      "  xor %%r15,%%r15 \n"
-
-     "  iretq           \n"
+     FIASCO_ASM_IRET
      :                          // no output
      : "a" (nonull_static_cast<Return_frame*>(current()->regs())),
        "c" (Gdt::gdt_data_user | Gdt::Selector_user),
@@ -236,6 +275,13 @@ int
 Thread::check_trap13_kernel (Trap_state * /*ts*/)
 { return 1; }
 
+PRIVATE static inline
+bool
+Thread::check_known_inkernel_fault(Trap_state *ts)
+{
+  extern char in_slowtrap_exit_label_iret[];
+  return ts->ip() == (Mword)in_slowtrap_exit_label_iret;
+}
 
 //----------------------------------------------------------------------------
 IMPLEMENTATION [amd64 & (debug | kdb)]:
@@ -264,7 +310,7 @@ Thread::call_nested_trap_handler(Trap_state *ts)
   if (!ntr)
     stack = dbg_stack.cpu(log_cpu).stack_top;
 
-  Unsigned64 dummy1, dummy2, dummy3;
+  Unsigned64 dummy1, dummy2, scratch1, scratch2;
 
   // don't set %esp if gdb fault recovery to ensure that exceptions inside
   // kdb/jdb don't overwrite the stack
@@ -275,26 +321,35 @@ Thread::call_nested_trap_handler(Trap_state *ts)
      "mov    %[stack],%%rsp	\n\t"	// setup clean stack pointer
      "1:			\n\t"
      "incq   %[recover]		\n\t"
+#ifndef CONFIG_CPU_LOCAL_MAP
      "mov    %%cr3, %[d1]	\n\t"
+#endif
      "push   %[d2]		\n\t"	// save old stack pointer on new stack
      "push   %[d1]		\n\t"	// save old pdbr
+#ifndef CONFIG_CPU_LOCAL_MAP
      "mov    %[pdbr], %%cr3	\n\t"
+#endif
      "callq  *%[handler]	\n\t"
      "pop    %[d1]		\n\t"
+#ifndef CONFIG_CPU_LOCAL_MAP
      "mov    %[d1], %%cr3	\n\t"
+#endif
      "pop    %%rsp		\n\t"	// restore old stack pointer
      "cmpq   $0,%[recover]	\n\t"	// check trap within trap handler
      "je     1f			\n\t"
      "decq   %[recover]		\n\t"
      "1:			\n\t"
-     : [ret] "=a"(ret), [d2] "=&r"(dummy2), [d1] "=&r"(dummy1), "=D"(dummy3),
+     : [ret] "=&a"(ret), [d2] "=&r"(dummy2), [d1] "=&r"(dummy1), "=D"(scratch1),
+       "=S"(scratch2),
        [recover] "+m" (ntr)
      : [ts] "D" (ts),
+#ifndef CONFIG_CPU_LOCAL_MAP
        [pdbr] "r" (Kernel_task::kernel_task()->virt_to_phys((Address)Kmem::dir())),
+#endif
        [cpu] "S" (log_cpu),
        [stack] "r" (stack),
        [handler] "m" (nested_trap_handler)
-     : "rdx", "rcx", "r8", "r9", "memory");
+     : "rdx", "rcx", "r8", "r9", "r10", "r11", "memory");
 
   if (!ntr)
     Cpu_call::handle_global_requests();

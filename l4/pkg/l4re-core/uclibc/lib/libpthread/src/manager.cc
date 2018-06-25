@@ -35,7 +35,9 @@
 #include <l4/re/dataspace>
 #include <l4/re/rm>
 #include <l4/re/util/cap_alloc>
+#include <l4/re/util/unique_cap>
 #include <l4/sys/capability>
+#include <l4/sys/debugger.h>
 #include <l4/sys/factory>
 #include <l4/sys/scheduler>
 #include <l4/sys/thread>
@@ -221,11 +223,17 @@ __pthread_manager(void *arg)
                   auto th = request.req_thread;
                   /* Thread still waiting to be joined. Only release
                      L4 resources for now. */
-                  using L4Re::Util::Auto_cap;
-                  Auto_cap<void>::Cap s = L4::Cap<void>(th->p_thsem_cap);
-                  th->p_thsem_cap = L4_INVALID_CAP;
-                  Auto_cap<void>::Cap t = L4::Cap<void>(th->p_th_cap);
-                  th->p_th_cap = L4_INVALID_CAP;
+                  // Keep the cap slot allocated and let pthread_free() do the
+                  // final cleanup. This way, we can safely check the
+                  // thread cap index for kernel object presence until
+                  // pthread_join/detach() was called.
+                  l4_fpage_t del_obj[2] =
+                    {
+                      L4::Cap<void>(th->p_thsem_cap).fpage(),
+                      L4::Cap<void>(th->p_th_cap).fpage()
+                    };
+                  L4Re::Env::env()->task()->unmap_batch(del_obj, 2,
+                                                        L4_FP_DELETE_OBJ);
                 }
             }
           break;
@@ -357,7 +365,8 @@ static int pthread_l4_free_stack(void *stack_addr, void *guardaddr)
   if (err < 0)
     return err;
 
-  L4Re::Util::cap_alloc.free(ds);
+  if (err == L4Re::Rm::Detached_ds)
+    L4Re::Util::cap_alloc.free(ds, L4Re::This_task);
 
   return e->rm()->free_area((l4_addr_t)guardaddr);
 }
@@ -475,7 +484,7 @@ static int pthread_allocate_stack(const pthread_attr_t *attr,
 
       if (err < 0)
 	{
-	  L4Re::Util::cap_alloc.free(ds);
+	  L4Re::Util::cap_alloc.free(ds, L4Re::This_task);
 	  e->rm()->free_area(l4_addr_t(map_addr));
 	  return -1;
 	}
@@ -516,25 +525,24 @@ int __pthread_mgr_create_thread(pthread_descr thread, char **tos,
 {
   using namespace L4Re;
   Env const *e = Env::env();
-  L4Re::Util::Auto_cap<L4::Thread>::Cap _t = L4Re::Util::cap_alloc.alloc<L4::Thread>();
+  auto _t = L4Re::Util::make_unique_cap<L4::Thread>();
   if (!_t.is_valid())
-    return ENOMEM;
+    return -ENOMEM;
 
-  L4Re::Util::Auto_cap<Th_sem_cap>::Cap th_sem
-    =  L4Re::Util::cap_alloc.alloc<Th_sem_cap>();
+  auto th_sem = L4Re::Util::make_unique_cap<Th_sem_cap>();
   if (!th_sem.is_valid())
-    return ENOMEM;
+    return -ENOMEM;
 
-  int err = l4_error(e->factory()->create_thread(_t.get()));
+  int err = l4_error(e->factory()->create(_t.get()));
   if (err < 0)
-    return -err;
+    return err;
 
   // needed by __alloc_thread_sem
   thread->p_th_cap = _t.cap();
 
   err = __alloc_thread_sem(thread, th_sem.get());
   if (err < 0)
-    return -err;
+    return err;
 
   thread->p_thsem_cap = th_sem.cap();
 
@@ -545,10 +553,12 @@ int __pthread_mgr_create_thread(pthread_descr thread, char **tos,
   attr.pager(e->rm());
   attr.exc_handler(e->rm());
   if ((err = l4_error(_t->control(attr))) < 0)
-    fprintf(stderr, "ERROR: l4 thread control returned: %d\n", err);
+   {
+     fprintf(stderr, "ERROR: thread control returned: %d\n", err);
+     return err;
+   }
 
   l4_utcb_tcr_u(nt_utcb)->user[0] = l4_addr_t(thread);
-
 
   l4_umword_t *&_tos = (l4_umword_t*&)*tos;
 
@@ -556,15 +566,28 @@ int __pthread_mgr_create_thread(pthread_descr thread, char **tos,
   *(--_tos) = 0; /* ret addr */
   *(--_tos) = l4_addr_t(f);
 
+  err = l4_error(_t->ex_regs(l4_addr_t(__pthread_new_thread_entry),
+                             l4_addr_t(_tos), 0));
 
-  _t->ex_regs(l4_addr_t(__pthread_new_thread_entry), l4_addr_t(_tos), 0);
+  if (err < 0)
+    {
+      fprintf(stderr, "ERROR: exregs returned error: %d\n", err);
+      return err;
+    }
 
   if (thread->p_start_args.start_routine
       && !(create_flags & PTHREAD_L4_ATTR_NO_START))
     {
       l4_sched_param_t sp = l4_sched_param(prio >= 0 ? prio : 2);
       sp.affinity = affinity;
-      e->scheduler()->run_thread(_t.get(), sp);
+      err = l4_error(e->scheduler()->run_thread(_t.get(), sp));
+      if (err < 0)
+        {
+          fprintf(stderr,
+                  "ERROR: could not start thread, run_thread returned %d\n",
+                  err);
+          return err;
+        }
     }
 
   // release the automatic capabilities
@@ -630,6 +653,7 @@ int __pthread_start_manager(pthread_descr mgr)
     }
 
   __pthread_manager_request = mgr->p_th_cap;
+  l4_debugger_set_object_name(__pthread_manager_request, "pthread-mgr");
   return 0;
 }
 
@@ -772,7 +796,7 @@ static int pthread_handle_create(pthread_t *thread, const pthread_attr_t *attr,
                                      pthread_start_thread, prio,
                                      attr ? attr->create_flags : 0,
                                      attr ? attr->affinity : l4_sched_cpu_set(0, ~0, 1));
-  saved_errno = err;
+  saved_errno = -err;
 
   /* Check if cloning succeeded */
   if (err < 0) {
@@ -844,8 +868,8 @@ static void pthread_free(pthread_descr th)
 
     {
       // free the semaphore and the thread
-      L4Re::Util::Auto_cap<void>::Cap s = L4::Cap<void>(th->p_thsem_cap);
-      L4Re::Util::Auto_cap<void>::Cap t = L4::Cap<void>(th->p_th_cap);
+      L4Re::Util::Unique_del_cap<void> s(L4::Cap<void>(th->p_thsem_cap));
+      L4Re::Util::Unique_del_cap<void> t(L4::Cap<void>(th->p_th_cap));
     }
 
   /* One fewer threads in __pthread_handles */

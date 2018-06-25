@@ -1,4 +1,5 @@
 /* Default linker script, for normal executables */
+/* From binutils-2.19 */
 OUTPUT_FORMAT("elf32-powerpc", "elf32-powerpc",
 	      "elf32-powerpc")
 OUTPUT_ARCH(powerpc:common)
@@ -15,11 +16,8 @@ PHDRS
 
 SECTIONS
 {
-  PROVIDE (__executable_start = 0x010000);
-  . = __executable_start + SIZEOF_HEADERS;
   /* Read-only sections, merged into text segment: */
-  /* PROVIDE (__executable_start = 0x10000000); . = 0x10000000 + SIZEOF_HEADERS;
-   */
+  PROVIDE (__executable_start = SEGMENT_START("text-segment", 0x01800000)); . = SEGMENT_START("text-segment", 0x01800000) + SIZEOF_HEADERS;
   /DISCARD/ :
   { *(.interp)
     *(.note.gnu.build-id)

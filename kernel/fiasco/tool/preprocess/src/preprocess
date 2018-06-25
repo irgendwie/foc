@@ -629,7 +629,7 @@ sub match_e_opt
   my $t = '\(\)&|,\{\}!-';
   my $orig_tag = $tag;
 
-  while ($tag =~ /^\s*([$t]|(?:[^\s$t]+))\s*(.*?)$/)
+  while ($tag =~ /^$s ([$t]|(?:[^\s$t]+)) $s (.*?)$/sx)
     {
       my $r = $parts{$1};
       $cp .= defined $r ? $r : 0;
@@ -682,6 +682,11 @@ sub parse_file
 	      handle_source_code ();
 	      next NEXTLINE;	      
 	    }
+          if (/^$s (?:INTERFACE | IMPLEMENTATION) $s \[ (.*)/sx
+              && (! ($1 =~ /\]/)))
+            {
+              next MORE;
+            }
 
 	  if (s/^($s)
 	        (?:(INTERFACE
@@ -1306,7 +1311,9 @@ sub handle_function
 	    {
 	      if (s/^($s)NEEDS\s*\[([^\]]+)\]([\s\n])/$1$3/s)
 		{
-		  @{$func->{needs}} = split (/\s*,\s*/, $2);
+		  my $needs = $2;
+		  $needs =~ s/^\s+|\s+$//g;
+		  @{$func->{needs}} = split (/\s*,\s*/, $needs);
 		  # Delete NEEDS directive, but keep newlines
 		  while ($func->{pretext} =~ 
 			 s|NEEDS \s* \[ ( (?:[^\n\]]*\n)* )
@@ -1751,7 +1758,7 @@ sub print_funcdef($)
   # Remove default arguments from argument list
   my $args = $function->{args};
   $expr = qr{ [^(),]* (?:$paren_group)? [^(),]* }x;
-  $args =~ s/$s = $expr//gx;
+  $args =~ s/$s (?<![=!])=(?!=) $expr//gx;
   $args =~ s/($s(?:override|final))+($s)$/$2/g;
 
   print_expand "\n";

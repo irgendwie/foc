@@ -73,6 +73,7 @@ enum l4_msgtag_protocol
   L4_PROTO_META          = -21L, ///< Meta information protocol
   L4_PROTO_IOMMU         = -22L, ///< Protocol ID for IO-MMUs
   L4_PROTO_DEBUGGER      = -23L, ///< Protocol ID for the ddebugger
+  L4_PROTO_SMCCC         = -24L, ///< Protocol ID for ARM SMCCC calls
 };
 
 enum L4_varg_type
@@ -99,11 +100,6 @@ enum l4_msgtag_flags
    * \hideinitializer
    */
   L4_MSGTAG_ERROR        = 0x8000,
-  /**
-   * Cross-CPU invocation indicator flag.
-   * \hideinitializer
-   */
-  L4_MSGTAG_XCPU         = 0x4000,
 
   // flags for sending IPC
   /**

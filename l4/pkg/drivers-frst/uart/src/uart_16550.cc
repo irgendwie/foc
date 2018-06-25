@@ -29,6 +29,11 @@ namespace L4
   {
     _regs = regs;
 
+    // Only do the detection on x86 where we want to avoid
+    // to write to I/O ports unnecessarily.
+    // On other platforms there are UARTs where this check
+    // fails.
+#if defined(__x86_64__) || defined(__i686__) || defined(__i386__)
     char scratch, scratch2, scratch3;
 
     scratch = _regs->read<unsigned char>(IER);
@@ -46,6 +51,7 @@ namespace L4
 
     if (!(scratch2 == 0x00 && scratch3 == 0x0f))
       return false;  // this is not the uart
+#endif
 
     if (!(_init_flags & F_skip_init))
       {
@@ -83,7 +89,7 @@ namespace L4
   bool Uart_16550::change_mode(Transfer_mode m, Baud_rate r)
   {
     unsigned long old_lcr = _regs->read<unsigned char>(LCR);
-    if(r != BAUD_NC) {
+    if(r != BAUD_NC && _base_rate) {
       unsigned short divisor = _base_rate / r;
       _regs->write<unsigned char>(LCR, old_lcr | 0x80/*DLAB*/);
       _regs->write<unsigned char>(TRB, divisor & 0x0ff);        /* BRD_LOW  */

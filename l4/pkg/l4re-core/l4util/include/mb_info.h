@@ -14,13 +14,17 @@
 #ifndef L4UTIL_MB_INFO_H
 #define L4UTIL_MB_INFO_H
 
+/******************************************************************************
+ * Multiboot (v1)
+ *****************************************************************************/
+
 #ifndef __ASSEMBLY__
 
 #include <l4/sys/l4int.h>
 
 /**
  * \anchor struct_l4util_mod_list
- *  The structure type "mod_list" is used by the 
+ *  The structure type "mod_list" is used by the
  *  \ref struct_l4util_mb_info "multiboot_info" structure.
  */
 
@@ -42,10 +46,10 @@ typedef struct
 
 typedef struct __attribute__((packed))
 {
-  l4_uint32_t struct_size;	/** <Size of structure */
-  l4_uint64_t addr;		/** <Start address */
-  l4_uint64_t size;		/** <Size of memory range */
-  l4_uint32_t type;		/** <type of memory range */
+  l4_uint32_t struct_size;	/**< Size of structure */
+  l4_uint64_t addr;		/**< Start address */
+  l4_uint64_t size;		/**< Size of memory range */
+  l4_uint32_t type;		/**< type of memory range */
   /* unspecified optional padding... */
 } l4util_mb_addr_range_t;
 
@@ -162,7 +166,7 @@ typedef struct
   l4_uint8_t direct_color_mode_info;
   /** @} */
 
-  /** @name >= VESA version 2.0 
+  /** @name >= VESA version 2.0
    * @{*/
   l4_uint32_t phys_base;
   l4_uint32_t reserved1;
@@ -220,7 +224,7 @@ typedef struct
       l4_uint32_t pad;
     }
     a;
-    
+
     struct
     {
       /** (ELF) Kernel section header table */
@@ -232,7 +236,7 @@ typedef struct
     e;
   }
   syms;
-  
+
   l4_uint32_t mmap_length;	/**< size of memory mapping buffer */
   l4_uint32_t mmap_addr;	/**< address of memory mapping buffer */
   l4_uint32_t drives_length;	/**< size of drive info buffer */
@@ -297,5 +301,84 @@ typedef struct
 #define L4UTIL_MB_VALID_ASM		0x2BADB002
 
 
-#endif
+/******************************************************************************
+ * Multiboot2
+ *****************************************************************************/
 
+#ifndef __ASSEMBLY__
+
+typedef struct
+{
+  l4_uint32_t total_size;
+  l4_uint32_t reserved;
+}  __attribute__((packed)) l4util_mb2_info_t;
+
+typedef struct
+{
+  char string[0];
+}  __attribute__((packed)) l4util_mb2_cmdline_tag_t;
+
+typedef struct
+{
+  l4_uint32_t mod_start;
+  l4_uint32_t mod_end;
+  char string[];
+}  __attribute__((packed)) l4util_mb2_module_tag_t;
+
+typedef struct
+{
+  l4_uint64_t base_addr;
+  l4_uint64_t length;
+  l4_uint32_t type;
+  l4_uint32_t reserved;
+}  __attribute__((packed)) l4util_mb2_memmap_entry_t;
+
+typedef struct
+{
+  l4_uint32_t entry_size;
+  l4_uint32_t entry_version;
+  l4util_mb2_memmap_entry_t entries[];
+}  __attribute__((packed)) l4util_mb2_memmap_tag_t;
+
+typedef struct
+{
+  char data[0];
+} __attribute__((packed)) l4util_mb2_rsdp_tag_t;
+
+typedef struct
+{
+  l4_uint32_t type;
+  l4_uint32_t size;
+
+  union
+  {
+    l4util_mb2_cmdline_tag_t cmdline;
+    l4util_mb2_module_tag_t module;
+    l4util_mb2_memmap_tag_t memmap;
+    l4util_mb2_rsdp_tag_t rsdp;
+  };
+}  __attribute__((packed)) l4util_mb2_tag_t;
+
+#endif  /* ! __ASSEMBLY__ */
+
+
+#define L4UTIL_MB2_MAGIC		0xE85250D6
+#define L4UTIL_MB2_ARCH_I386		0x0
+
+#define L4UTIL_MB2_TERMINATOR_HEADER_TAG	0
+#define L4UTIL_MB2_INFO_REQUEST_HEADER_TAG	1
+#define L4UTIL_MB2_ENTRY_ADDRESS_HEADER_TAG	3
+
+#define L4UTIL_MB2_TAG_FLAG_REQUIRED		0
+
+#define L4UTIL_MB2_TAG_ALIGN_SHIFT		3
+#define L4UTIL_MB2_TAG_ALIGN			8
+
+#define L4UTIL_MB2_TERMINATOR_INFO_TAG		0
+#define L4UTIL_MB2_BOOT_CMDLINE_INFO_TAG	1
+#define L4UTIL_MB2_MODULE_INFO_TAG		3
+#define L4UTIL_MB2_MEMORY_MAP_INFO_TAG		6
+#define L4UTIL_MB2_RSDP_OLD_INFO_TAG		14
+#define L4UTIL_MB2_RSDP_NEW_INFO_TAG		15
+
+#endif

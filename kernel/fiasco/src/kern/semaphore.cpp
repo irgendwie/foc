@@ -1,5 +1,6 @@
 INTERFACE:
 
+#include <limits.h>
 #include "irq.h"
 #include "kobject_helper.h"
 #include "prio_list.h"
@@ -49,7 +50,9 @@ Semaphore::count_up(Thread **wakeup)
           *wakeup = t;
         }
       else
-        ++_queued;
+	// avoid wrapping the _queued counter around to 0
+	if (_queued < LONG_MAX)
+	  ++_queued;
     }
   return old;
 }
@@ -70,7 +73,7 @@ Semaphore::_hit_edge_irq(Upstream_irq const *ui)
   else
     mask_and_ack();
 
-  ui->ack();
+  Upstream_irq::ack(ui);
   if (t)
     t->activate();
 }
@@ -86,7 +89,7 @@ Semaphore::_hit_level_irq(Upstream_irq const *ui)
 {
   assert (cpu_lock.test());
   mask_and_ack();
-  ui->ack();
+  Upstream_irq::ack(ui);
   Thread *t = 0;
   count_up(&t);
 
@@ -193,11 +196,10 @@ Semaphore::kinvoke(L4_obj_ref, L4_fpage::Rights /*rights*/, Syscall_frame *f,
                    Utcb const *utcb, Utcb *)
 {
   L4_msg_tag tag = f->tag();
+  int op = get_irq_opcode(tag, utcb);
 
-  if (EXPECT_FALSE(tag.words() < 1))
+  if (EXPECT_FALSE(op < 0))
     return commit_result(-L4_err::EInval);
-
-  Unsigned16 op = access_once(utcb->values) & 0xffff;
 
   switch (tag.proto())
     {

@@ -62,6 +62,14 @@ public:
     Unsigned8 len;
   } __attribute__((packed));
 
+  struct Lapic : public Apic_head
+  {
+    enum { ID = LAPIC };
+    Unsigned8 apic_processor_id;
+    Unsigned8 apic_id;
+    Unsigned32 flags;
+  } __attribute__((packed));
+
   struct Io_apic : public Apic_head
   {
     enum { ID = IOAPIC };
@@ -469,7 +477,7 @@ Acpi_rsdp::locate()
     BDA_EBDA_SEGMENT       = 0x00040E,
   };
 
-  // If we are booted from UEFI, bootstrap reads the RDSP pointer from
+  // If we are booted from UEFI, bootstrap reads the RSDP pointer from
   // UEFI and creates a memory descriptor with sub type 5 for it
   for (auto const &md: Kip::k()->mem_descs_a())
     if (   md.type() == Mem_desc::Info

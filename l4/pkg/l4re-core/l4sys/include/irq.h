@@ -26,6 +26,7 @@
 
 #include <l4/sys/kernel_object.h>
 #include <l4/sys/ipc.h>
+#include <l4/sys/rcv_endpoint.h>
 
 /**
  * \defgroup l4_irq_api IRQs
@@ -57,20 +58,27 @@
  * \param thread  The thread object to attach `irq` to.
  *
  * \return Syscall return tag
+ *
+ * The *protected label* is stored in the kernel and sent to the attached
+ * thread with the IRQ-triggered notification. It allows the receiver thread
+ * to securely identify the IRQ.
  */
 L4_INLINE l4_msgtag_t
 l4_irq_attach(l4_cap_idx_t irq, l4_umword_t label,
-              l4_cap_idx_t thread) L4_NOTHROW;
+              l4_cap_idx_t thread) L4_NOTHROW
+  L4_DEPRECATED("Use l4_rcv_ep_bind_thread().");
 
 /**
  * \ingroup l4_irq_api
  * \copybrief L4::Irq::attach
+ *
  * \param irq  IRQ object where `thread` is attached to.
  * \copydetails L4::Irq::attach
  */
 L4_INLINE l4_msgtag_t
 l4_irq_attach_u(l4_cap_idx_t irq, l4_umword_t label,
-                l4_cap_idx_t thread, l4_utcb_t *utcb) L4_NOTHROW;
+                l4_cap_idx_t thread, l4_utcb_t *utcb) L4_NOTHROW
+  L4_DEPRECATED("Use l4_rcv_ep_bind_thread_u().");
 
 /**
  * Chain an IRQ to another master IRQ source.
@@ -291,8 +299,7 @@ l4_irq_detach_u(l4_cap_idx_t irq, l4_utcb_t *utcb) L4_NOTHROW
 L4_INLINE l4_msgtag_t
 l4_irq_trigger_u(l4_cap_idx_t irq, l4_utcb_t *utcb) L4_NOTHROW
 {
-  l4_utcb_mr_u(utcb)->mr[0] = L4_IRQ_OP_TRIGGER;
-  return l4_ipc_send(irq, utcb, l4_msgtag(L4_PROTO_IRQ, 1, 0, 0),
+  return l4_ipc_send(irq, utcb, l4_msgtag(L4_PROTO_IRQ, 0, 0, 0),
                      L4_IPC_BOTH_TIMEOUT_0);
 }
 
@@ -324,7 +331,10 @@ L4_INLINE l4_msgtag_t
 l4_irq_attach(l4_cap_idx_t irq, l4_umword_t label,
               l4_cap_idx_t thread) L4_NOTHROW
 {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   return l4_irq_attach_u(irq, label, thread, l4_utcb());
+#pragma GCC diagnostic pop
 }
 
 L4_INLINE l4_msgtag_t

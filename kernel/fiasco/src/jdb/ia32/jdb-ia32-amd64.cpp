@@ -191,8 +191,6 @@ void Jdb::init()
 
   Kconsole::console()->register_console(push_cons());
 
-  Thread::set_int3_handler(handle_int3_threadctx);
-
   _connected = true;
   Thread::may_enter_jdb = true;
 }
@@ -387,8 +385,10 @@ Jdb::peek_task(Address addr, Space *task, void *value, int width)
       // user address, use temporary mapping
       phys = Address(task->virt_to_phys (addr));
 
+#ifndef CONFIG_CPU_LOCAL_MAP
       if (phys == ~0UL)
-	phys = task->virt_to_phys_s0((void*)addr);
+        phys = task->virt_to_phys_s0((void*)addr);
+#endif
 
       if (phys == ~0UL)
 	return -1;
@@ -424,8 +424,10 @@ Jdb::poke_task(Address addr, Space *task, void const *value, int width)
       // user address, use temporary mapping
       phys = Address(task->virt_to_phys(addr));
 
+#ifndef CONFIG_CPU_LOCAL_MAP
       if (phys == ~0UL)
-	phys = task->virt_to_phys_s0((void*)addr);
+        phys = task->virt_to_phys_s0((void*)addr);
+#endif
 
       if (phys == ~0UL)
 	return -1;
@@ -460,7 +462,7 @@ Jdb::is_adapter_memory(Address virt, Space *task)
 
   for (auto const &m: Kip::k()->mem_descs_a())
     if (m.type() == Mem_desc::Conventional && !m.is_virtual()
-        && m.start() <= phys && m.end() >= phys)
+        && m.contains(phys))
       return false;
 
   return true;
@@ -926,8 +928,8 @@ Jdb::handle_nested_trap(Jdb_entry_frame *e)
 	default:
 	  cursor(Jdb_screen::height(), 1);
 	  printf("\nGeneral Protection (eip=" L4_PTR_FMT ","
-	      " err=" L4_PTR_FMT ") -- jdb bug?\n",
-	      e->ip(), e->_err);
+	      " err=" L4_PTR_FMT ", pfa=" L4_PTR_FMT ") -- jdb bug?\n",
+	      e->ip(), e->_err, e->_cr2);
 	  break;
 	}
       break;

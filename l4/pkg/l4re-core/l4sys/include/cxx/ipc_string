@@ -1,4 +1,4 @@
-// vi:ft=cpp
+// vi:set ft=cpp: -*- Mode: C++ -*-
 /*
  * (c) 2014 Alexander Warg <alexander.warg@kernkonzept.com>
  *
@@ -42,6 +42,13 @@ struct String : Array<CHAR, LEN>
     this->data[i] = CHAR();
   }
 };
+
+#if __cplusplus >= 201103L
+template< typename CHAR = char, typename LEN_TYPE = unsigned long,
+          LEN_TYPE MAX  = (L4_UTCB_GENERIC_DATA_SIZE *
+                           sizeof(l4_umword_t)) / sizeof(CHAR) >
+using String_in_buf = Array_in_buf<CHAR, LEN_TYPE, MAX>;
+#endif
 
 namespace Msg {
 template<typename A, typename LEN>

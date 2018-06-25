@@ -20,19 +20,6 @@ protected:
   static Trap_state::Handler nested_trap_handler FIASCO_FASTCALL;
 };
 
-
-//----------------------------------------------------------------------------
-INTERFACE [ia32,amd64]:
-
-class Trap_state;
-
-EXTENSION class Thread
-{
-private:
-  static int  (*int3_handler)(Trap_state*);
-};
-
-
 //----------------------------------------------------------------------------
 IMPLEMENTATION [ia32,amd64,ux]:
 
@@ -55,11 +42,12 @@ IMPLEMENTATION [ia32,amd64,ux]:
 Trap_state::Handler Thread::nested_trap_handler FIASCO_FASTCALL;
 
 IMPLEMENT
-Thread::Thread()
+Thread::Thread(Ram_quota *q)
 : Receiver(),
   Sender(0),   // select optimized version of constructor
   _pager(Thread_ptr::Invalid),
   _exc_handler(Thread_ptr::Invalid),
+  _quota(q),
   _del_observer(0)
 {
   assert (state(false) == 0);
@@ -75,7 +63,7 @@ Thread::Thread()
   _recover_jmpbuf = 0;
   _timeout        = 0;
 
-  *reinterpret_cast<void(**)()> (--_kernel_sp) = user_invoke;
+  prepare_switch_to(&user_invoke);
 
   arch_init();
 
@@ -223,6 +211,12 @@ Thread::handle_slow_trap(Trap_state *ts)
       if (ts->_trapno == 14)
 	goto check_exception;
 
+      if (check_known_inkernel_fault(ts))
+        {
+          ts->ip(regs()->ip());
+          goto check_exception;
+        }
+
       goto generic_debug;      // we were in kernel mode -- nothing to emulate
     }
 
@@ -272,20 +266,14 @@ Thread::handle_slow_trap(Trap_state *ts)
   _recover_jmpbuf = 0;
 
 check_exception:
+  // backward compatibility cruft: check for those insane "int3" debug
+  // messaging command sequences
+  if (!from_user && (ts->_trapno == 3))
+    goto generic_debug;
 
   // send exception IPC if requested
   if (send_exception(ts))
     goto success;
-
-  // backward compatibility cruft: check for those insane "int3" debug
-  // messaging command sequences
-  if (ts->_trapno == 3)
-    {
-      if (int3_handler && int3_handler(ts))
-	goto success;
-
-      goto generic_debug;
-    }
 
   // privileged tasks also may invoke the kernel debugger with a debug
   // exception
@@ -317,6 +305,43 @@ generic_debug:
   return call_nested_trap_handler(ts);
 }
 
+//----------------------------------------------------------------------------
+IMPLEMENTATION [(ia32 || amd64 || ux) && cpu_local_map]:
+
+PUBLIC inline
+bool
+Thread::update_local_map(Address pfa, Mword /*error_code*/)
+{
+  unsigned idx = (pfa >> 39) & 0x1ff;
+  if (EXPECT_FALSE((idx > 255) && idx != 259))
+    return false;
+
+  auto *m = Kmem::pte_map();
+  if (EXPECT_FALSE(m->operator [](idx)))
+    return false;
+
+  auto s = Kmem::current_cpu_udir()->walk(Virt_addr(pfa), 0);
+  assert (!s.is_valid());
+  auto r = vcpu_aware_space()->dir()->walk(Virt_addr(pfa), 0);
+  if (EXPECT_FALSE(!r.is_valid()))
+    return false;
+
+  m->set_bit(idx);
+   *s.pte = *r.pte;
+   return true;
+}
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION [(ia32 || amd64 || ux) && !cpu_local_map]:
+
+PUBLIC inline
+bool
+Thread::update_local_map(Address, Mword)
+{ return false; }
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION [ia32 || amd64 || ux]:
+
 /**
  * The low-level page fault handler called from entry.S.  We're invoked with
  * interrupts turned off.  Apart from turning on interrupts in almost
@@ -340,6 +365,10 @@ thread_page_fault(Address pfa, Mword error_code, Address ip, Mword flags,
 #endif
 
   Thread *t = current_thread();
+
+  if (t->update_local_map(pfa, error_code))
+    return 1;
+
   // Pagefault in user mode or interrupts were enabled
   if (EXPECT_TRUE(PF::is_usermode_error(error_code))
       && t->vcpu_pagefault(pfa, error_code, ip))
@@ -408,21 +437,8 @@ Thread::send_exception_arch(Trap_state *ts)
   // Do not send exception IPC but return 'not for us' if thread is a normal
   // thread (not alien) and it's a debug trap,
   // debug traps for aliens are always reflected as exception IPCs
-  if (!(state() & Thread_alien)
-      && (ts->_trapno == 1 || ts->_trapno == 3))
+  if (!(state() & Thread_alien) && (ts->_trapno == 1))
     return 0; // we do not handle this
-
-  if (ts->_trapno == 3)
-    {
-      if (state() & Thread_dis_alien)
-	{
-	  state_del(Thread_dis_alien);
-	  return 0; // no exception
-	}
-
-      // set IP back on the int3 instruction
-      ts->ip(ts->ip() - 1);
-    }
 
   return 1; // make it an exception
 }
@@ -587,17 +603,7 @@ IMPLEMENTATION[ia32 || amd64]:
 #include "static_init.h"
 #include "terminate.h"
 
-int (*Thread::int3_handler)(Trap_state*);
 DEFINE_PER_CPU Per_cpu<Thread::Dbg_stack> Thread::dbg_stack;
-
-STATIC_INITIALIZER_P (int3_handler_init, KDB_INIT_PRIO);
-
-static
-void
-int3_handler_init()
-{
-  Thread::set_int3_handler(Thread::handle_int3);
-}
 
 IMPLEMENT static inline NEEDS ["gdt.h"]
 Mword
@@ -638,136 +644,6 @@ thread_handle_fputrap()
 
   return current_thread()->switchin_fpu();
 }
-
-PUBLIC static inline
-void
-Thread::set_int3_handler(int (*handler)(Trap_state *ts))
-{
-  int3_handler = handler;
-}
-
-/**
- * Default handle for int3 extensions if JDB is disabled. If the JDB is
- * available, Jdb::handle_int3_threadctx is called instead.
- * @return 0 not handled, wait for user response
- *         1 successfully handled
- */
-PUBLIC static
-int
-Thread::handle_int3(Trap_state *ts)
-{
-  Mem_space *s   = current()->mem_space();
-  int from_user  = ts->cs() & 3;
-  Address   ip   = ts->ip();
-  Unsigned8 todo = s->peek((Unsigned8*)ip, from_user);
-  Unsigned8 *str;
-  int len;
-  char c;
-
-  switch (todo)
-    {
-    case 0xeb: // jmp == enter_kdebug()
-      len = s->peek((Unsigned8*)(ip+1), from_user);
-      str = (Unsigned8*)(ip + 2);
-
-      putstr("KDB: ");
-      if (len > 0)
-	{
-	  for (; len; len--)
-            putchar(s->peek(str++, from_user));
-	}
-      putchar('\n');
-      return 0; // => Jdb
-
-    case 0x90: // nop == l4kd_display()
-      if (          s->peek((Unsigned8*)(ip+1), from_user)  != 0xeb /*jmp*/
-	  || (len = s->peek((Unsigned8*)(ip+2), from_user)) <= 0)
-	return 0; // => Jdb
-
-      str = (Unsigned8*)(ip + 3);
-      for (; len; len--)
-	putchar(s->peek(str++, from_user));
-      break;
-
-    case 0x3c: // cmpb
-      todo = s->peek((Unsigned8*)(ip+1), from_user);
-      switch (todo)
-	{
-	case  0: // l4kd_outchar
-	  putchar(ts->value() & 0xff);
-	  break;
-        case  1: // l4kd_outnstring
-	  str = (Unsigned8*)ts->value();
-          len = ts->value4();
-	  for(; len > 0; len--)
-	    putchar(s->peek(str++, from_user));
-	  break;
-	case  2: // l4kd_outstr
-	  str = (Unsigned8*)ts->value();
-	  for (; (c=s->peek(str++, from_user)); )
-            putchar(c);
-	  break;
-	case  5: // l4kd_outhex32
-	  printf("%08lx", ts->value() & 0xffffffff);
-	  break;
-	case  6: // l4kd_outhex20
-	  printf("%05lx", ts->value() & 0xfffff);
-	  break;
-	case  7: // l4kd_outhex16
-	  printf("%04lx", ts->value() & 0xffff);
-	  break;
-	case  8: // l4kd_outhex12
-	  printf("%03lx", ts->value() & 0xfff);
-	  break;
-	case  9: // l4kd_outhex8
-	  printf("%02lx", ts->value() & 0xff);
-	  break;
-	case 11: // l4kd_outdec
-	  printf("%lu", ts->value());
-	  break;
-	case 31: // Watchdog
-	  switch (ts->value2())
-	    {
-	    case 1:
-	      // enable watchdog
-	      Watchdog::user_enable();
-	      break;
-	    case 2:
-	      // disable watchdog
-	      Watchdog::user_disable();
-	      break;
-	    case 3:
-	      // user takes over the control of watchdog and is from now on
-	      // responsible for calling "I'm still alive" events (function 5)
-	      Watchdog::user_takeover_control();
-	      break;
-	    case 4:
-	      // user returns control of watchdog to kernel
-	      Watchdog::user_giveback_control();
-              break;
-	    case 5:
-	      // I'm still alive
-	      Watchdog::touch();
-	      break;
-	    }
-	  break;
-
-	default: // ko
-	  if (todo < ' ')
-	    return 0; // => Jdb
-
-	  putchar(todo);
-	  break;
-	}
-      break;
-
-    default:
-      return 0; // => Jdb
-    }
-
-  return 1;
-}
-
 
 PRIVATE inline
 void

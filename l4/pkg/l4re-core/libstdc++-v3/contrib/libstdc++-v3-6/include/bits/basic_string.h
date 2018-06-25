@@ -570,10 +570,25 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	    if (!_Alloc_traits::_S_always_equal() && !_M_is_local()
 		&& _M_get_allocator() != __str._M_get_allocator())
 	      {
-		// replacement allocator cannot free existing storage
-		_M_destroy(_M_allocated_capacity);
-		_M_data(_M_local_data());
-		_M_set_length(0);
+		// Propagating allocator cannot free existing storage so must
+		// deallocate it before replacing current allocator.
+		if (__str.size() <= _S_local_capacity)
+		  {
+		    _M_destroy(_M_allocated_capacity);
+		    _M_data(_M_local_data());
+		    _M_set_length(0);
+		  }
+		else
+		  {
+		    const auto __len = __str.size();
+		    auto __alloc = __str._M_get_allocator();
+		    // If this allocation throws there are no effects:
+		    auto __ptr = _Alloc_traits::allocate(__alloc, __len + 1);
+		    _M_destroy(_M_allocated_capacity);
+		    _M_data(__ptr);
+		    _M_capacity(__len);
+		    _M_set_length(__len);
+		  }
 	      }
 	    std::__alloc_on_copy(_M_get_allocator(), __str._M_get_allocator());
 	  }
@@ -2528,7 +2543,10 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       int
       compare(size_type __pos, size_type __n1, const _CharT* __s,
 	      size_type __n2) const;
-  };
+
+      // Allow basic_stringbuf::__xfer_bufptrs to call _M_length:
+      template<typename, typename, typename> friend class basic_stringbuf;
+    };
 _GLIBCXX_END_NAMESPACE_CXX11
 #else  // !_GLIBCXX_USE_CXX11_ABI
   // Reference-counted COW string implentation
@@ -5698,6 +5716,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     { };
 #endif
 
+_GLIBCXX_END_NAMESPACE_VERSION
+
 #if __cplusplus > 201103L
 
 #define __cpp_lib_string_udls 201304
@@ -5706,6 +5726,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   {
   inline namespace string_literals
   {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     _GLIBCXX_DEFAULT_ABI_TAG
     inline basic_string<char>
@@ -5731,12 +5752,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     { return basic_string<char32_t>{__str, __len}; }
 #endif
 
+_GLIBCXX_END_NAMESPACE_VERSION
   } // inline namespace string_literals
   } // inline namespace literals
 
 #endif // __cplusplus > 201103L
 
-_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
 
 #endif // C++11

@@ -320,8 +320,8 @@ parse_memvalue(const char *s, unsigned long *val, char **ep)
 
   switch (**ep)
     {
-    case 'G': *val <<= 10;
-    case 'M': *val <<= 10;
+    case 'G': *val <<= 10; /* FALLTHRU */
+    case 'M': *val <<= 10; /* FALLTHRU */
     case 'k': case 'K': *val <<= 10; (*ep)++;
     };
 
@@ -589,7 +589,13 @@ setup_and_check_kernel_config(Platform_base *plat, l4_kernel_info_t *kip)
         if (!running_in_hyp_mode())
           {
             printf("  Detected HYP kernel, switching to HYP mode\n");
-            plat->arm_switch_to_hyp();
+
+            if (   ((ia->cpuinfo.MIDR >> 16) & 0xf) != 0xf // ARMv7
+                || (((ia->cpuinfo.ID_PFR[1] >> 12) & 0xf) == 0)) // No Virt Ext
+              panic("\nCPU does not support Virtualization Extensions\n");
+
+            if (!plat->arm_switch_to_hyp())
+              panic("\nNo switching functionality available on this platform.\n");
             if (!running_in_hyp_mode())
               panic("\nFailed to switch to HYP as required by Fiasco.OC.\n");
           }
@@ -746,13 +752,22 @@ startup(char const *cmdline)
   regions.optimize();
   regions.dump();
 
+  L4_kernel_options::Options *lko = find_kopts(mods->module(kernel_module), l4i);
+
+  // Note: we have to ensure that the original ELF binaries are not modified
+  // or overwritten up to this point. However, the memory regions for the
+  // original ELF binaries are freed during load_elf_module() but might be
+  // used up to here.
+  // ------------------------------------------------------------------------
+
+  // The ELF binaries for the kernel, sigma0, and roottask must no
+  // longer be used from here on.
   if (char const *c = check_arg(cmdline, "-presetmem="))
     {
       unsigned fill_value = strtoul(c + 11, NULL, 0);
       fill_mem(fill_value);
     }
 
-  L4_kernel_options::Options *lko = find_kopts(mods->module(kernel_module), l4i);
   kcmdline_parse(L4_CONST_CHAR_PTR(mb_mod[kernel_module].cmdline), lko);
   lko->uart   = kuart;
   lko->flags |= kuart_flags;
@@ -762,7 +777,6 @@ startup(char const *cmdline)
    * patch ourselves into the booter task addresses */
   unsigned long api_version = get_api_version(l4i);
   unsigned major = api_version >> 24;
-  printf("  API Version: (%x) %s\n", major, (major & 0x80)?"experimental":"");
   switch (major)
     {
     case 0x87: // Fiasco

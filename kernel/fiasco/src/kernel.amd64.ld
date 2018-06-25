@@ -81,6 +81,8 @@ SECTIONS {
 #endif
   .text : AT (ADDR(.text) - _fiasco_image_offset) {
     PROVIDE ( _kernel_text_start = . );
+    *(SORT(.entry.text.*))
+    PROVIDE ( _kernel_text_entry_end = . );
     crt0.o(.text)
     *(.init)
     *(.text SORT(.text.*) .gnu.linkonce.t.*)
@@ -89,6 +91,11 @@ SECTIONS {
     PROVIDE (_ecode = .);
 
     *(.rodata .rodata.* .gnu.linkonce.r.*)
+
+    . = ALIGN(16);
+    PROVIDE (ia32_intel_microcode_start = .);
+    KEEP(*(.intel_microcode))
+    PROVIDE (ia32_intel_microcode_end = .);
 
     . = ALIGN(8);
     JDB_TABLE(log);

@@ -130,18 +130,20 @@ IMPLEMENTATION:
 #include "warn.h"
 
 PUBLIC
-virtual void
-Thread::ipc_receiver_aborted()
+void
+Thread::ipc_receiver_aborted() override
 {
+  assert (cpu_lock.test());
   assert (wait_queue());
   set_wait_queue(0);
 
-  activate();
+  if (xcpu_state_change(~0UL, Thread_canceled | Thread_ready, true))
+    current()->switch_to_locked(this);
 }
 
 PRIVATE
 void
-Thread::ipc_send_msg(Receiver *recv)
+Thread::ipc_send_msg(Receiver *recv) override
 {
   Syscall_frame *regs = _snd_regs;
   bool success = transfer_msg(regs->tag(), nonull_static_cast<Thread*>(recv), regs,
@@ -161,9 +163,9 @@ Thread::ipc_send_msg(Receiver *recv)
     recv->switch_to_locked(this);
 }
 
-PUBLIC virtual
+PUBLIC
 void
-Thread::modify_label(Mword const *todo, int cnt)
+Thread::modify_label(Mword const *todo, int cnt) override
 {
   assert (_snd_regs);
   Mword l = _snd_regs->from_spec();
@@ -222,7 +224,8 @@ Thread::handle_page_fault_pager(Thread_ptr const &_pager,
                 l->err     = error_code;
                 l->pfa     = pfa);
 
-      pager = this; // block on ourselves
+      halt();
+      return true;
     }
 
   // set up a register block used as an IPC parameter block for the
@@ -921,6 +924,8 @@ Thread::transfer_msg_items(L4_msg_tag const &tag, Thread* snd, Utcb *snd_utcb,
         { // XXX: not sure if void fpages are needed
           // skip send item and current rcv_buffer
           --items;
+          *rcv_word = 0;
+          rcv_word += 2;
           continue;
         }
 
@@ -1014,17 +1019,14 @@ Thread::transfer_msg_items(L4_msg_tag const &tag, Thread* snd, Utcb *snd_utcb,
 
 /**
  * \pre Runs on the sender CPU
+ * \retval true when the IPC was aborted
+ * \retval false iff the IPC was already finished
  */
 PRIVATE inline
 bool
 Thread::abort_send(L4_error const &e, Thread *partner)
 {
   state_del_dirty(Thread_full_ipc_mask);
-
-  if (_timeout && _timeout->is_set())
-    _timeout->reset();
-
-  set_timeout(0);
   Abort_state abt = Abt_ipc_done;
 
   if (partner->home_cpu() == current_cpu())
@@ -1045,10 +1047,10 @@ Thread::abort_send(L4_error const &e, Thread *partner)
     {
     default:
     case Abt_ipc_done:
-      return true;
+      return false;
     case Abt_ipc_cancel:
       utcb().access()->error = e;
-      return false;
+      return true;
     case Abt_ipc_in_progress:
       state_add_dirty(Thread_ipc_transfer);
       while (state() & Thread_ipc_transfer)
@@ -1056,7 +1058,7 @@ Thread::abort_send(L4_error const &e, Thread *partner)
           state_del_dirty(Thread_ready);
           schedule();
         }
-      return true;
+      return false;
     }
 }
 
@@ -1064,6 +1066,8 @@ Thread::abort_send(L4_error const &e, Thread *partner)
 
 /**
  * \pre Runs on the sender CPU
+ * \retval true iff the IPC was finished during the wait
+ * \retval false iff the IPC was aborted with some error
  */
 PRIVATE inline
 bool
@@ -1076,7 +1080,7 @@ Thread::do_send_wait(Thread *partner, L4_timeout snd_t)
       Unsigned64 tval = snd_t.microsecs(Timer::system_clock(), utcb().access(true));
       // Zero timeout or timeout expired already -- give up
       if (tval == 0)
-        return abort_send(L4_error::Timeout, partner);
+        return !abort_send(L4_error::Timeout, partner);
 
       set_timeout(&timeout, tval);
     }
@@ -1089,13 +1093,20 @@ Thread::do_send_wait(Thread *partner, L4_timeout snd_t)
       schedule();
     }
 
+  reset_timeout();
+
+  if (EXPECT_FALSE(ipc_state == (Thread_canceled | Thread_send_wait)))
+    {
+      state_del_dirty(Thread_full_ipc_mask);
+      utcb().access()->error = L4_error::Canceled;
+      return false;
+    }
+
   if (EXPECT_FALSE(ipc_state == (Thread_cancel | Thread_send_wait)))
-    return abort_send(L4_error::Canceled, partner);
+    return !abort_send(L4_error::Canceled, partner);
 
   if (EXPECT_FALSE(ipc_state == (Thread_timeout | Thread_send_wait)))
-    return abort_send(L4_error::Timeout, partner);
-
-  reset_timeout();
+    return !abort_send(L4_error::Timeout, partner);
 
   return true;
 }

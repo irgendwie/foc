@@ -11,7 +11,7 @@ class Ram_quota;
 class Thread;
 
 
-/** Hardware interrupts.  This class encapsulates handware IRQs.  Also,
+/** Hardware interrupts.  This class encapsulates hardware IRQs.  Also,
     it provides a registry that ensures that only one receiver can sign up
     to receive interrupt IPC messages.
  */
@@ -47,7 +47,8 @@ class Irq_sender
 public:
   enum Op {
     Op_attach = 0,
-    Op_detach = 1
+    Op_detach = 1,
+    Op_bind     = 0x10,
   };
 
 protected:
@@ -137,6 +138,18 @@ static Irq_base_cast register_irq_base_cast;
 }
 
 PROTECTED inline
+int
+Irq::get_irq_opcode(L4_msg_tag tag, Utcb const *utcb)
+{
+  if (tag.proto() == L4_msg_tag::Label_irq && tag.words() == 0)
+    return Op_trigger;
+  if (EXPECT_FALSE(tag.words() < 1))
+    return -1;
+
+  return access_once(utcb->values) & 0xffff;
+}
+
+PROTECTED inline
 L4_msg_tag
 Irq::dispatch_irq_proto(Unsigned16 op, bool may_unmask)
 {
@@ -221,7 +234,7 @@ Irq_muxer::handle(Upstream_irq const *ui)
 {
   assert (cpu_lock.test());
   Irq_base::mask_and_ack();
-  ui->ack();
+  Upstream_irq::ack(ui);
 
   if (EXPECT_FALSE (!Irq_base::_next))
     return;
@@ -307,25 +320,14 @@ Irq_muxer::kinvoke(L4_obj_ref, L4_fpage::Rights /*rights*/, Syscall_frame *f,
                    Utcb const *utcb, Utcb *)
 {
   L4_msg_tag tag = f->tag();
+  int op = get_irq_opcode(tag, utcb);
 
-  if (EXPECT_FALSE(tag.words() < 1))
+  if (EXPECT_FALSE(op < 0))
     return commit_result(-L4_err::EInval);
-
-  Unsigned16 op = access_once(utcb->values + 0) & 0xffff;
 
   switch (tag.proto())
     {
     case L4_msg_tag::Label_irq:
-      // start BACKWARD COMPAT
-      switch (op)
-        {
-        case Op_compat_chain:
-          printf("KERNEL: backward compat IRQ-MUX chain, recompile your user code");
-          return sys_attach(tag, utcb, f);
-        default:
-          break;
-        }
-      // end BACKWARD COMPAT
       return dispatch_irq_proto(op, false);
 
     case L4_msg_tag::Label_irq_mux:
@@ -573,12 +575,12 @@ Irq_sender::modify_label(Mword const *todo, int cnt)
 
 PRIVATE static
 Context::Drq::Result
-Irq_sender::handle_remote_hit(Context::Drq *, Context *, void *arg)
+Irq_sender::handle_remote_hit(Context::Drq *, Context *target, void *arg)
 {
   Irq_sender *irq = (Irq_sender*)arg;
   irq->set_cpu(current_cpu());
   auto t = access_once(&irq->_irq_thread);
-  if (EXPECT_TRUE(t->home_cpu() == current_cpu()))
+  if (EXPECT_TRUE(t == target))
     {
       if (EXPECT_TRUE(irq->send_msg(t, false)))
         return Context::Drq::no_answer_resched();
@@ -633,7 +635,7 @@ Irq_sender::_hit_level_irq(Upstream_irq const *ui)
 
   assert (cpu_lock.test());
   mask_and_ack();
-  ui->ack();
+  Upstream_irq::ack(ui);
   if (queue() == 0)
     send();
 }
@@ -667,7 +669,7 @@ Irq_sender::_hit_edge_irq(Upstream_irq const *ui)
   else
     mask_and_ack();
 
-  ui->ack();
+  Upstream_irq::ack(ui);
   if (q == 0)
     send();
 }
@@ -691,6 +693,9 @@ Irq_sender::sys_attach(L4_msg_tag tag, Utcb const *utcb,
       thread = Ko::deref<Thread>(&tag, utcb, &rights);
       if (!thread)
         return tag;
+
+      if (EXPECT_FALSE(!(rights & L4_fpage::Rights::CS())))
+        return commit_result(-L4_err::EPerm);
     }
   else
     thread = current_thread();
@@ -703,7 +708,7 @@ Irq_sender::sys_attach(L4_msg_tag tag, Utcb const *utcb,
   // thread. The user is responsible to synchronize Irq::attach calls to prevent
   // this.
   if (res == 0)
-    _irq_id = utcb->values[1];
+    _irq_id = access_once(&utcb->values[1]);
 
   cpu_lock.clear();
   rl.del();
@@ -732,34 +737,30 @@ Irq_sender::kinvoke(L4_obj_ref, L4_fpage::Rights /*rights*/, Syscall_frame *f,
                     Utcb const *utcb, Utcb *)
 {
   L4_msg_tag tag = f->tag();
+  int op = get_irq_opcode(tag, utcb);
 
-  if (EXPECT_FALSE(tag.words() < 1))
+  if (EXPECT_FALSE(op < 0))
     return commit_result(-L4_err::EInval);
-
-  Unsigned16 op = access_once(utcb->values + 0);
 
   switch (tag.proto())
     {
-    case L4_msg_tag::Label_irq:
-      // start BACKWARD COMPAT
+    case L4_msg_tag::Label_kobject:
       switch (op)
         {
-        case Op_compat_attach:
-          printf("KERNEL: backward compat IRQ attach, recompile your user code\n");
+        case Op_bind: // the Rcv_endpoint opcode (equal to Ipc_gate::bind_thread
           return sys_attach(tag, utcb, f);
-        case Op_compat_detach:
-          printf("KERNEL: backward compat IRQ detach, recompile your user code\n");
-          return sys_detach();
         default:
-          break;
+          return commit_result(-L4_err::ENosys);
         }
-      // end BACKWARD COMPAT
+
+    case L4_msg_tag::Label_irq:
       return dispatch_irq_proto(op, _queued < 1);
 
     case L4_msg_tag::Label_irq_sender:
       switch (op)
         {
         case Op_attach:
+          WARN("Irq_sender::attach is deprecated, please use Rcv_endpoint::bind_thread.\n");
           return sys_attach(tag, utcb, f);
 
         case Op_detach:
@@ -801,9 +802,9 @@ Irq::operator delete (void *_l)
 {
   Irq *l = reinterpret_cast<Irq*>(_l);
   if (l->_q)
-    l->_q->free(sizeof(Irq));
-
-  allocator()->free(l);
+    allocator()->q_free(l->_q, l);
+  else
+    allocator()->free(l);
 }
 
 PUBLIC template<typename T> inline NEEDS[Irq::allocator, Irq::operator new]

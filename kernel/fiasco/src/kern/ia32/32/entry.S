@@ -183,11 +183,11 @@ in_slowtrap:
 	CHECK_SANITY 60(%esp)		/* scratches ecx */
 
 	addl	$4*2,%esp		/* Pop ds, es segment registers */
-	popl	REG_GS
-	popl	REG_FS			/* Restore segment registers */
+	MAY_FAULT(popl REG_GS, in_slowtrap_exit_label_restore_gs)
+	MAY_FAULT(popl REG_FS, in_slowtrap_exit_label_restore_fs) /* Restore segment registers */
 	popa
 	addl	$4*2,%esp		/* Pop trap number and error code */
-	iret
+	MAY_FAULT(iret, in_slowtrap_exit_label_iret)
 
 .Lunexpected_trap_pop:
 #ifndef CONFIG_NO_FRAME_PTR
@@ -404,6 +404,23 @@ GATE_ENTRY	0x2f, entry_int_pic_ignore, (ACC_PL_K | ACC_INTR_GATE)
 #ifndef CONFIG_SCHED_RTC
 INTERRUPT	0x28, int8
 #endif
+
+/**
+ * Stub array for all IRQ vector entries in the IDT
+ *
+ * The immediate in the movabs shall be patched with the
+ * address of an Irq_base object that is later attached to
+ * the corresponding IDT vector.
+ */
+	.global idt_irq_vector_stubs
+	.align 64
+idt_irq_vector_stubs:
+.rept APIC_IRQ_BASE - 0x28
+	push	%eax
+	mov	$0, %eax
+	jmp	__generic_irq_entry
+.endr
+
 
 	.p2align 4
 	.type	.Lall_irqs,@function
@@ -655,8 +672,8 @@ vcpu_resume:
 	addl $(2*4), %esp // skip es and ds for now
 	//popl %es
 	//popl %ds
-	popl REG_GS
-	popl REG_FS
+	MAY_FAULT(popl REG_GS, vcpu_resume_label_gs)
+	MAY_FAULT(popl REG_FS, vcpu_resume_label_fs)
 	popa
 	addl $(2*4), %esp
 	iret

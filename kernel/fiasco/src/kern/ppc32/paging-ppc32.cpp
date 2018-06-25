@@ -1,13 +1,5 @@
 INTERFACE[ppc32]:
 
-#include "types.h"
-
-class PF {};
-class Page {};
-
-//------------------------------------------------------------------------------
-INTERFACE[ppc32]:
-
 #include <cassert>
 #include "types.h"
 #include "ptab_base.h"
@@ -151,7 +143,8 @@ typedef Ptab::List< Ptab::Traits<Unsigned32, 22, 10, true>,
 
 typedef Ptab::Shift<Ptab_traits, Virt_addr::Shift>::List Ptab_traits_vpn;
 typedef Ptab::Page_addr_wrap<Page_number, Virt_addr::Shift> Ptab_va_vpn;
-
+typedef Pdir_t<Pte_ptr, Ptab_traits_vpn, Ptab_va_vpn> Pdir;
+class Kpdir : public Pdir {};
 
 IMPLEMENTATION[ppc32]:
 
@@ -198,11 +191,12 @@ Mword PF::is_read_error(Mword error)
 IMPLEMENT inline
 Mword PF::addr_to_msgword0(Address pfa, Mword error)
 {
-  Mword a = pfa & ~3;
+  Mword a = pfa & ~7ul;
   if(is_translation_error(error))
     a |= 1;
   if(!is_read_error(error))
     a |= 2;
+  // TODO: flag instruction fetch faults with a |= 4
   return a;
 }
 

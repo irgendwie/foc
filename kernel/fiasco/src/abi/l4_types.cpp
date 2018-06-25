@@ -384,14 +384,9 @@ public:
     Error        = 0x8000,
 
     /**
-     * The IPC operation did cross CPU boundaries.
-     */
-    X_cpu        = 0x4000,
-
-    /**
      * Combination of flags that are not pass through.
      */
-    Rcv_flags    = Error | X_cpu,
+    Rcv_flags    = Error,
   };
 
   /**
@@ -433,6 +428,7 @@ public:
     Label_semaphore = -20L,    ///< Protocol ID for semaphore objects.
     Label_iommu = -22L,        ///< Protocol ID for IOMMUs
     Label_debugger = -23L,     ///< Protocol ID for the debugger
+    Label_smc = -24L,          ///< Protocol ID for ARM SMC calls.
     Max_factory_label = Label_iommu,
   };
 private:
@@ -665,12 +661,21 @@ public:
 };
 
 //----------------------------------------------------------------------------
-INTERFACE [arm]:
+INTERFACE [arm && 32bit]:
 
 EXTENSION class L4_exception_ipc
 {
 public:
   enum { Msg_size = 21 };
+};
+
+//----------------------------------------------------------------------------
+INTERFACE [arm && 64bit]:
+
+EXTENSION class L4_exception_ipc
+{
+public:
+  enum { Msg_size = 39 };
 };
 
 //----------------------------------------------------------------------------

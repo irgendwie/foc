@@ -92,6 +92,7 @@ private:
 IMPLEMENTATION [mips]:
 
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <new>
 
@@ -101,6 +102,7 @@ IMPLEMENTATION [mips]:
 #include "globals.h"
 #include "kdb_ke.h"
 #include "l4_types.h"
+#include "logdefs.h"
 #include "panic.h"
 #include "paging.h"
 #include "kmem.h"
@@ -158,7 +160,7 @@ PUBLIC static inline
 bool
 Mem_space::is_full_flush(L4_fpage::Rights rights)
 {
-  return rights & L4_fpage::Rights::R();
+  return (bool)(rights & L4_fpage::Rights::R());
 }
 
 // Mapping utilities
@@ -182,8 +184,8 @@ Mem_space::Status
 Mem_space::v_insert(Phys_addr phys, Vaddr virt, Page_order size,
                     Attr page_attribs)
 {
-  assert (cxx::get_lsb(phys, size) == 0);
-  assert (cxx::get_lsb(Virt_addr(virt), size) == 0);
+  assert (cxx::is_zero(cxx::get_lsb(phys, size)));
+  assert (cxx::is_zero(cxx::get_lsb(Virt_addr(virt), size)));
 
   unsigned po = cxx::int_value<Page_order>(size);
   auto i = _dir->walk(virt, po, Kmem_alloc::q_allocator(_quota));
@@ -300,7 +302,7 @@ Mem_space::v_delete(Vaddr virt, Page_order size,
                     L4_fpage::Rights page_attribs)
 {
   (void)size;
-  assert (cxx::get_lsb(Virt_addr(virt), size) == 0);
+  assert (cxx::is_zero(cxx::get_lsb(Virt_addr(virt), size)));
   auto i = _dir->walk(virt);
 
   if (EXPECT_FALSE (! i.is_pte()))
@@ -324,7 +326,7 @@ Mem_space::v_delete(Vaddr virt, Page_order size,
   return ret;
 }
 
-PUBLIC inline NEEDS[Mem_space::set_guest_ctl1_rid]
+PUBLIC inline NEEDS[Mem_space::set_guest_ctl1_rid, <cstdio>]
 bool
 Mem_space::add_tlb_entry(Vaddr virt, bool write_access, bool need_probe, bool guest)
 { (void) write_access;
@@ -353,7 +355,7 @@ Mem_space::add_tlb_entry(Vaddr virt, bool write_access, bool need_probe, bool gu
   else
     {
       // dual page mode (at leaf level)
-      bool odd_page = virt & Vaddr(Virt_addr(1) << Page_order(Config::PAGE_SHIFT));
+      bool odd_page = !cxx::is_zero(virt & Vaddr(Virt_addr(1) << Page_order(Config::PAGE_SHIFT)));
       e.e -= odd_page;
       e0 = e.e[0];
       e0 >>= Pdir::PWField_ptei - 2;
@@ -439,11 +441,8 @@ PUBLIC static
 void
 Mem_space::init()
 {
-  // read CCA from config 0.K0 and check against compiled in version
-  unsigned cca = Tlb_entry::Cached >> 3;
-  if (cca != 3 && Mips::Cfg<0>::read().k0() != cca)
-    panic("MIPS: compiled in CCA=%u conflicts with KSEG0 CCA=%u\n",
-          cca, (unsigned)Mips::Cfg<0>::read().k0());
+  Tlb_entry::cached = Mips::Cfg<0>::read().k0() << 3;
+  printf("TLB CCA: %ld\n", Tlb_entry::cached >> 3);
 
   init_page_sizes();
   //init_vzguestid();
@@ -491,7 +490,7 @@ Mem_space::make_current()
 //--------------------------------------------------------------
 IMPLEMENTATION [!mips_vz]:
 
-IMPLEMENT inline NEEDS ["kmem.h", Mem_space::c_asid]
+IMPLEMENT inline NEEDS ["kmem.h", "logdefs.h", Mem_space::c_asid]
 void Mem_space::switchin_context(Mem_space *)
 {
 #if 0
@@ -500,6 +499,7 @@ void Mem_space::switchin_context(Mem_space *)
     return;
 #endif
 
+  CNT_ADDR_SPACE_SWITCH;
   make_current();
 }
 
@@ -610,7 +610,6 @@ Mem_space::apply_extra_page_attribs(Attr *a)
     a->kern |= Page::Kern::Global();
 }
 
-#include "logdefs.h"
 PRIVATE inline
 void
 Mem_space::guest_id_init()
@@ -666,6 +665,8 @@ void Mem_space::switchin_context(Mem_space *)
         "mtc0 %0, $10, 4",  // Load GuestCtl1 with guest ID
         0x4 /* FEATURE_VZ */)
       : : "r"(0));
+
+  CNT_ADDR_SPACE_SWITCH;
 
   Mem_unit::set_current_asid(asid());
   _current.current() = this;

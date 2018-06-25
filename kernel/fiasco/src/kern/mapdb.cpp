@@ -223,19 +223,20 @@ static inline
 Physframe *
 Physframe::alloc(size_t size)
 {
-  Physframe* block
-    = (Physframe*)Kmem_alloc::allocator()->unaligned_alloc(mem_size(size));
-
 #if 1				// Optimization: See constructor
-  if (block) 
-    memset(block, 0, size * sizeof(Physframe));
+  void *mem = Kmem_alloc::allocator()->unaligned_alloc(mem_size(size));
+  if (mem)
+    memset(mem, 0, size * sizeof(Physframe));
+  return (Physframe *)mem;
 #else
+  Physframe* block
+    = (Physframe *)Kmem_alloc::allocator()->unaligned_alloc(mem_size(size));
   assert (block);
   for (unsigned i = 0; i < size; ++i)
     new (block + i) Physframe();
-#endif
 
   return block;
+#endif
 }
 
 inline NOEXPORT
@@ -498,8 +499,10 @@ Treemap::operator delete (void *block)
 {
   Treemap *t = reinterpret_cast<Treemap*>(block);
   Space *id = t->_owner_id;
+  auto end = t->_key_end;
+  asm ("" : "=m"(t->_owner_id), "=m"(t->_key_end));
   allocator()->free(block);
-  Mapping_tree::quota(id)->free(Treemap::quota_size(t->_key_end));
+  Mapping_tree::quota(id)->free(Treemap::quota_size(end));
 }
 
 PUBLIC inline

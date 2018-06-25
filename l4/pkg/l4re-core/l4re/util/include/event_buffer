@@ -1,4 +1,4 @@
-// set vi:ft=cpp:
+// vi:set ft=cpp: -*- Mode: C++ -*-
 /*
  * (c) 2008-2009 Adam Lackorzynski <adam@os.inf.tu-dresden.de>,
  *               Alexander Warg <warg@os.inf.tu-dresden.de>
@@ -126,7 +126,7 @@ public:
                CB const &cb, D data = D())
   {
 
-    if (l4_error(irq->attach(0, thread)))
+    if (l4_error(irq->bind_thread(thread, 0)))
       return;
 
     while (1)

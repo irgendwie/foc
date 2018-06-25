@@ -175,7 +175,8 @@ Apic::us_to_apic(Unsigned64 us)
        "addl  %%ecx, %%eax		\n\t"
        "shll  $11, %%eax		\n\t"
       :"=a" (apic), "=d" (dummy1), "=&c" (dummy2)
-      : "A" (us),   "g" (scaler_us_to_apic)
+      : "A" (us),   "g" ((Unsigned32)scaler_us_to_apic)
+        // scaler_us_to_apic is actually 32-bit
        );
   return apic;
 }
@@ -587,8 +588,9 @@ Apic::enable_errors()
       if (get_max_lvt() > 3)
 	clear_num_errors();
       after = get_num_errors();
-      printf("APIC ESR value before/after enabling: %08x/%08x\n",
-	    before, after);
+      if (Config::Warn_level >= 2)
+        printf("APIC ESR value before/after enabling: %08x/%08x\n",
+               before, after);
     }
 }
 
@@ -654,7 +656,7 @@ Apic::test_present_but_disabled()
 }
 
 // activate APIC by writing to appropriate MSR
-static FIASCO_INIT_CPU_AND_PM
+PUBLIC static FIASCO_INIT_CPU_AND_PM
 void
 Apic::activate_by_msr()
 {
@@ -826,8 +828,9 @@ PUBLIC static
 void
 Apic::dump_info()
 {
-  printf("Local APIC[%02x]: version=%02x max_lvt=%d\n",
-         get_id() >> 24, get_version(), get_max_lvt());
+  if (Config::Warn_level >= 2)
+    printf("Local APIC[%02x]: version=%02x max_lvt=%d\n",
+           get_id() >> 24, get_version(), get_max_lvt());
 }
 
 IMPLEMENT

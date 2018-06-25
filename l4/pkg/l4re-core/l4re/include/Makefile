@@ -14,9 +14,12 @@ EXTRA_TARGET += \
   log       \
   inhibitor \
   mem_alloc \
+  mmio_space \
   namespace \
   parent    \
   rm        \
+  shared_cap \
+  unique_cap \
   video/colors \
   video/goos \
   video/view

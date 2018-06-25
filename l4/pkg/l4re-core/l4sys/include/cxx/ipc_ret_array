@@ -1,4 +1,4 @@
-// vi:ft=cpp
+// vi:set ft=cpp: -*- Mode: C++ -*-
 /*
  * (c) 2014 Alexander Warg <alexander.warg@kernkonzept.com>
  *
@@ -20,7 +20,7 @@
 #include "types"
 #include "ipc_basics"
 
-namespace L4 { namespace Ipc L4_EXPORT L4_EXPORT {
+namespace L4 { namespace Ipc L4_EXPORT {
 
 // ---------------------------------------------------------------
 /**

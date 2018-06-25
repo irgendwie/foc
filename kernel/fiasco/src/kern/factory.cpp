@@ -77,10 +77,12 @@ void Factory::operator delete (void *_f)
     return;
 
   Ram_quota *p = f->parent();
+  auto limit = f->limit();
+  asm ("" : "=m"(*f));
 
   allocator()->free(f);
   if (p)
-    p->free(sizeof(Factory) + f->limit());
+    p->free(sizeof(Factory) + limit);
 }
 
 PRIVATE
@@ -179,28 +181,10 @@ factory_factory(Ram_quota *q, Space *,
   return static_cast<Factory*>(q)->create_factory(u->values[2]);
 }
 
-// start BACKWARD COMPAT
-static Kobject_iface * FIASCO_FLATTEN
-compat_irq_factory(Ram_quota *q, Space *,
-                   L4_msg_tag tag, Utcb const *u,
-                   int *err)
-{
-  *err = L4_err::ENomem;
-  printf("KERNEL: backward compat IRQ create, use new protocol IDs\n"
-         "        L4_PROTO_IRQ_SENDER, L4_PROTO_IRQ_MUX\n");
-  if (tag.words() >= 3 && u->values[2])
-    return Irq::allocate<Irq_muxer>(q);
-  else
-    return Irq::allocate<Irq_sender>(q);
-}
-// end BACKWARD COMPAT
-
 static inline void __attribute__((constructor)) FIASCO_INIT
 register_factory()
 {
   Kobject_iface::set_factory(L4_msg_tag::Label_factory, factory_factory);
-  // BACKWARD COMPAT
-  Kobject_iface::set_factory(L4_msg_tag::Label_irq, compat_irq_factory);
 }
 }
 
@@ -236,7 +220,7 @@ Factory::Log_entry::print(String_buffer *buf) const
   { /*   0 */ "gate", "irq", 0, 0, 0, 0, 0, 0,
     /*  -8 */ 0, 0, 0, "task", "thread", 0, 0, "factory",
     /* -16 */ "vm", 0, 0, 0, "sem" }; 
-  char const *_op = -op <= (int)(sizeof(ops)/sizeof(ops[0]))
+  char const *_op = -op < (int)(sizeof(ops)/sizeof(ops[0]))
     ? ops[-op] : "invalid op";
   if (!_op)
     _op = "(nan)";
