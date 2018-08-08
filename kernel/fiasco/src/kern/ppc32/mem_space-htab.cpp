@@ -68,7 +68,7 @@ Mem_space::vsid(Address ea)
 
   //kernel space
   if(ea > Mem_layout::User_max)
-    dir = Kmem::kdir();
+    dir = Kmem::kdir;
 
   return _vsid(ea, dir);
 }
@@ -350,11 +350,14 @@ IMPLEMENT inline NEEDS["kmem.h"]
 void
 Mem_space::switchin_context(Mem_space *from)
 {
-  if(dir() == Kmem::dir())
+  if(dir() == Kmem::kdir)
     return;
 
   if (this != from)
-    make_current();
+    {
+      CNT_ADDR_SPACE_SWITCH;
+      make_current();
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -421,7 +424,7 @@ PRIVATE static FIASCO_INIT
 void
 Mem_space::install()
 {
-  Mword kernel_vsid = _vsid(Mem_layout::User_max + 1, Kmem::kdir())
+  Mword kernel_vsid = _vsid(Mem_layout::User_max + 1, Kmem::kdir)
                       | Segment::Default_attribs;
 
   asm volatile( " sync              \n"

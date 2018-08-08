@@ -24,80 +24,89 @@
 /*
  * No error code.  Clear error code and push trap number.
  */
-#define	EXCEPTION(n,name)					\
-	GATE_ENTRY(n,entry_##name,ACC_PL_K | ACC_INTR_GATE)	;\
-	.p2align 3			      	 		;\
-entry_##name:							;\
-	push	$(0)						;\
-	push	$(n)						;\
-	save_all_regs						;\
+.macro	EXCEPTION n, name
+	GATE_ENTRY	\n, entry_\name, (ACC_PL_K | ACC_INTR_GATE)
+	.p2align 3
+entry_\name:
+	SWITCH_TO_KERNEL_CR3 0
+	push	$(0)
+	push	$(\n)
+	save_all_regs
 	jmp	_slowtraps
+.endm
 
 /*
  * User-accessible exception.  Otherwise, same as above.
  */
-#define	EXCEP_USR(n,name)					\
-	GATE_ENTRY(n,entry_##name,ACC_PL_U | ACC_INTR_GATE)	;\
-	.p2align 3			      	 		;\
-entry_##name:							;\
-	push	$(0)						;\
-	push	$(n)						;\
-	save_all_regs						;\
+.macro	EXCEP_USR n, name
+	GATE_ENTRY	\n, entry_\name, (ACC_PL_U | ACC_INTR_GATE)
+	.p2align 3
+entry_\name:
+	SWITCH_TO_KERNEL_CR3 0
+	push	$(0)
+	push	$(\n)
+	save_all_regs
 	jmp	_slowtraps
+.endm
 
 /*
  * Error code has been pushed.  Just push trap number.
  */
-#define	EXCEP_ERR(n,name)					\
-	GATE_ENTRY(n,entry_##name,ACC_PL_K | ACC_INTR_GATE)	;\
-	.p2align 3			      	 		;\
-entry_##name:							;\
-	push	$(n)						;\
-	save_all_regs						;\
+.macro	EXCEP_ERR n, name
+	GATE_ENTRY	\n, entry_\name, (ACC_PL_K | ACC_INTR_GATE)
+	.p2align 3
+entry_\name:
+	SWITCH_TO_KERNEL_CR3 1
+	push	$(\n)
+	save_all_regs
 	jmp	_slowtraps
+.endm
 
-GATE_INITTAB_BEGIN(idt_init_table)
+GATE_INITTAB_BEGIN idt_init_table
 
-EXCEPTION(0x00,vec00_zero_div)
+	.section ".entry.text.vec", "ax", @progbits
+
+EXCEPTION	0x00, vec00_zero_div
 /* IA32 has to handle breakpoint exceptions if occured exactly at 
    entry_sys_fast_ipc -- see ia32/entry-ia32.S */
-GATE_ENTRY(0x01,entry_vec01_debug,ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	0x01, entry_vec01_debug, (ACC_PL_K | ACC_INTR_GATE)
 /* XXX IA32 has to handle NMI occured exactly at entry_sys_fast_ipc */
-EXCEP_USR(0x02,vec02_nmi)
-EXCEP_USR(0x03,vec03_breakpoint)
-EXCEP_USR(0x04,vec04_into)
-EXCEP_USR(0x05,vec05_bounds)
-EXCEPTION(0x06,vec06_invop)
-/* EXCEPTION(0x07,nofpu) */
+EXCEP_USR	0x02, vec02_nmi
+EXCEP_USR	0x03, vec03_breakpoint
+EXCEP_USR	0x04, vec04_into
+EXCEP_USR	0x05, vec05_bounds
+EXCEPTION	0x06, vec06_invop
+# EXCEPTION	0x07, nofpu
 // XXX we can't use a task gate, instead we must use IST
-GATE_ENTRY(0x08,entry_vec08_dbf, ACC_PL_K | ACC_INTR_GATE)
-EXCEPTION(0x09,vec09_fpu_ovfl)
-/* EXCEP_ERR(0x0a,vec0a_inv_tss) */
-EXCEP_ERR(0x0b,vec0b_segnp)
-EXCEP_ERR(0x0c,vec0c_stack_fault)
-EXCEP_ERR(0x0d,vec0d_gen_prot)
-/* EXCEP_ERR(0x0e,vec0e_page_fault) */
-/* EXCEPTION(0x0f,vec0f_trap_0f) */
-EXCEPTION(0x10,vec10_fpu_err)
-EXCEP_ERR(0x11,vec11_align)
-EXCEPTION(0x12,vec12_mcheck)
-EXCEPTION(0x13,vec13_simd_err)
+GATE_ENTRY	0x08, entry_vec08_dbf, (ACC_PL_K | ACC_INTR_GATE)
+EXCEPTION	0x09, vec09_fpu_ovfl
+# EXCEP_ERR	0x0a, vec0a_inv_tss
+EXCEP_ERR	0x0b, vec0b_segnp
+EXCEP_ERR	0x0c, vec0c_stack_fault
+EXCEP_ERR	0x0d, vec0d_gen_prot
+# EXCEP_ERR	0x0e, vec0e_page_fault
+# EXCEPTION	0x0f, vec0f_trap_0f
+EXCEPTION	0x10, vec10_fpu_err
+EXCEP_ERR	0x11, vec11_align
+EXCEPTION	0x12, vec12_mcheck
+EXCEPTION	0x13, vec13_simd_err
 
-
+	.section ".entry.text.slowtrap", "ax", @progbits
 	.p2align 4
 	.type	slowtraps,@function
 	.globl	slowtraps
 	/* We have to introduce the label _slowtraps besides the label
-	   slowtraps to achive that jmps from exception entry points
+	   slowtraps to achieve that jmps from exception entry points
 	   are optimized to two-byte jmps. The label slowtraps is visible
 	   from outside. */
 _slowtraps:
 slowtraps:
+	IA32_IBRS
 	mov	%rsp,%rdi		/* ARG1: address of trap_state */
 	mov	$0, %esi		/* ARG2: default CPU = 0 */
 	cld
 #ifndef CONFIG_NO_FRAME_PTR
-	mov     0x90(%rsp),%rax		/* create artificial stack frame */
+	mov     OFS__TRAP_STATE__IP(%rsp),%rax	/* create artificial stack frame */
 	push    %rax			/* push rip */
 	push	%rbp
 	lea	(%rsp),%rbp
@@ -122,7 +131,8 @@ in_slowtrap:
 
 	restore_all_regs
 	add	$0x10,%rsp		/* pop trap number and error code */
-	iretq
+	SAFE_IRET
+	MAY_FAULT(iretq, in_slowtrap_exit_label_iret)
 
 unexpected_trap_pop:
 #ifndef CONFIG_NO_FRAME_PTR
@@ -133,7 +143,8 @@ unexpected_trap:
 	mov	%rsp,%rdi		/* 1st arg: trap state */
 	call	trap_dump_panic
 
-GATE_ENTRY(0x0e,entry_vec0e_page_fault,ACC_PL_K | ACC_INTR_GATE)
+	.section ".entry.text.vec0e", "ax", @progbits
+GATE_ENTRY	0x0e, entry_vec0e_page_fault, (ACC_PL_K | ACC_INTR_GATE)
 
 /* we must save %cr2 before we can be preempted -- therefore we're an
    interrupt gate (invoked with interrupts turned off).  Also, we
@@ -148,7 +159,9 @@ GATE_ENTRY(0x0e,entry_vec0e_page_fault,ACC_PL_K | ACC_INTR_GATE)
 .globl entry_vec0e_page_fault
 entry_vec0e_page_fault:
 	cld
+	SWITCH_TO_KERNEL_CR3	1
 	SAVE_SCRATCH
+	IA32_IBRS
 
 /* We must reset the cancel flag here atomically
    if we are entering fresh from user mode and an IPC might occur.
@@ -156,25 +169,27 @@ entry_vec0e_page_fault:
    it will flag "kernel" in case an I/O-bitmap page is not mapped
    during an I/O access. */
 
-	mov     0x58(%rsp),%rcx   /* get CS from stack */
+	mov     (SCRATCH_REGISTER_SIZE + 0x10)(%rsp),%rcx   /* get CS from stack */
         andb    $3,%cl		/* retrieve current privilege level (CPL) */
 	jz	1f		/* CPL == 0 -> kernel, skip resetting state */
 	ESP_TO_TCB_AT %rcx
 	RESET_THREAD_CANCEL_AT %rcx
 1:
-	leaq	0x50(%rsp),%r8		/* arg5: ptr to return frame */
 	mov     PAGE_FAULT_ADDR,%rdi	/* arg1: page fault address */
-	mov     0x48(%rsp),%rsi		/* arg2: error code */
-	mov	0x50(%rsp),%rdx		/* arg3: rip */
-	mov	0x60(%rsp),%rcx		/* arg4: rflags */
+	pushq   %rdi			/* save pfa on stack as well */
+	leaq	(SCRATCH_REGISTER_SIZE + 0x10)(%rsp),%r8	/* arg5: ptr to return frame */
+	mov     (SCRATCH_REGISTER_SIZE + 0x08)(%rsp),%rsi	/* arg2: error code */
+	mov	(SCRATCH_REGISTER_SIZE + 0x10)(%rsp),%rdx	/* arg3: rip */
+	mov	(SCRATCH_REGISTER_SIZE + 0x20)(%rsp),%rcx	/* arg4: rflags */
 	call	thread_page_fault
 
 in_page_fault:
 	or	%rax,%rax
-	jz	bad_page_fault
+	jz	.Lbad_page_fault
+	add	$8, %rsp			/* drop pfa */
 	RESTORE_SCRATCH
 	add	$8,%rsp				/* remove error code */
-	iretq
+	SAFE_IRET
 
 /* If code or stack from a small address space are not yet mapped in the
    current page directory we might get a page fault on return from the
@@ -186,25 +201,28 @@ in_page_fault:
 
 /* recover from a bad page fault by invoking the slow_trap handler */
 	.p2align 4
-bad_page_fault:
+.Lbad_page_fault:
 	cli
 	/* we have on stack: r8, rdi, rsi, rdx, rcx, rax, error code
 	   move registers down to make room for trap number 
 	   and build complete trap state before  jumping to trap handler */
+	popq	%rdi		/* pop pfa */
+	mov	%rdi, %cr2	/* restore pfa */
 	RESTORE_SCRATCH
 	pushq	$0x0e
 	save_all_regs
 	jmp	slowtraps
 
-
+	.section ".entry.text.vec07", "ax", @progbits
 /* FPU not available in this context. */
-GATE_ENTRY(0x07,entry_vec07_fpu_unavail, ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	0x07, entry_vec07_fpu_unavail, (ACC_PL_K | ACC_INTR_GATE)
 
 /* do all of this with disabled interrupts */
 	.p2align 4
 	.type	entry_vec07_fpu_unavail,@function
 entry_vec07_fpu_unavail:
 	cld
+	SWITCH_TO_KERNEL_CR3 0
 	SAVE_SCRATCH
 	mov 	SCRATCH_REGISTER_SIZE(%rsp), %rdi
 	call	thread_handle_fputrap
@@ -212,7 +230,7 @@ in_handle_fputrap:
 	test 	%eax,%eax
 	jz	real_fpu_exception
 	RESTORE_SCRATCH
-	iretq
+	SAFE_IRET
 real_fpu_exception:
 	RESTORE_SCRATCH
 	pushq	$(0)
@@ -220,16 +238,16 @@ real_fpu_exception:
 	save_all_regs
 	jmp	_slowtraps
 
-
+	.section ".entry.text.timer", "ax", @progbits
 /* timer interrupt */
 #ifdef CONFIG_SCHED_PIT
-GATE_ENTRY(0x20,entry_int_timer,ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	0x20, entry_int_timer, (ACC_PL_K | ACC_INTR_GATE)
 #endif
 #ifdef CONFIG_SCHED_RTC
-GATE_ENTRY(0x28,entry_int_timer,ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	0x28, entry_int_timer, (ACC_PL_K | ACC_INTR_GATE)
 #endif
 #ifdef CONFIG_SCHED_APIC
-GATE_ENTRY(APIC_IRQ_BASE, entry_int_timer,ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	APIC_IRQ_BASE, entry_int_timer, (ACC_PL_K | ACC_INTR_GATE)
 #endif
 #ifdef CONFIG_SCHED_HPET
 /* HPET is set at startup */
@@ -238,20 +256,24 @@ GATE_ENTRY(APIC_IRQ_BASE, entry_int_timer,ACC_PL_K | ACC_INTR_GATE)
 	.p2align 4
 	.globl	entry_int_timer
 entry_int_timer:
+	SWITCH_TO_KERNEL_CR3	0
 	SAVE_SCRATCH
+	IA32_IBRS
 do_timer_interrupt:
 	cld
 	mov	SCRATCH_REGISTER_SIZE(%rsp),%rdi /* pass rip for logging */
 	call	thread_timer_interrupt		/* enter with disabled irqs */
 in_timer_interrupt:
 	RESTORE_SCRATCH
-	iretq
+	SAFE_IRET
 
 	.p2align 4
 	.globl	entry_int_timer_slow
 entry_int_timer_slow:
 	cld
+	SWITCH_TO_KERNEL_CR3	0
 	SAVE_SCRATCH
+	IA32_IBRS
 	call	thread_timer_interrupt_slow	/* enter with disabled irqs */
 in_timer_interrupt_slow:
 	jmp	do_timer_interrupt
@@ -261,26 +283,48 @@ in_timer_interrupt_slow:
 	.globl	entry_int_timer_stop
 entry_int_timer_stop:
 	cld
+	SWITCH_TO_KERNEL_CR3	0
 	SAVE_SCRATCH
 	call	thread_timer_interrupt_stop
 	RESTORE_SCRATCH
-	iretq
+	SAFE_IRET
 
 /* other interrupts */
 
-#define INTERRUPT(int,name)					\
-	GATE_ENTRY(int,entry_##name,ACC_PL_K | ACC_INTR_GATE) 	;\
-	.p2align 3			      	 		;\
-entry_##name:				      	 		;\
-	SAVE_SCRATCH						;\
-	mov	0x28(%rsp),%rsi					;\
-	mov	$ (int - 0x20),%rdi				;\
+.macro	INTERRUPT int, name
+	GATE_ENTRY	\int, entry_\name, (ACC_PL_K | ACC_INTR_GATE)
+	.p2align 3
+entry_\name:
+	SWITCH_TO_KERNEL_CR3 0
+	SAVE_SCRATCH
+	mov	0x28(%rsp), %rsi
+	mov	$ (\int - 0x20), %rdi
 	jmp	all_irqs
+.endm
+
+/**
+ * Stub array for all IRQ vector entries in the IDT
+ *
+ * The immediate in the movabs shall be patched with the
+ * address of an Irq_base object that is later attached to
+ * the corresponding IDT vector.
+ */
+	.section ".entry.text.irqs", "ax", @progbits
+	.global idt_irq_vector_stubs
+	.align 64
+idt_irq_vector_stubs:
+.rept APIC_IRQ_BASE - 0x28
+	push	%rdi
+	movabs	$0, %rdi
+	jmp	__generic_irq_entry
+.endr
+
 
 	.type __generic_irq_entry,@function
 	.global __generic_irq_entry
 
 __generic_irq_entry:
+	SWITCH_TO_KERNEL_CR3 1
 	push    %rsi
 	push	%rax
 	push	%rcx
@@ -293,44 +337,50 @@ __generic_irq_entry:
 	.p2align 4
 	.type	all_irqs,@function
 all_irqs:
+	IA32_IBRS
 	cld
 	call	irq_interrupt			/* enter with disabled irqs */
 in_interrupt:
 	RESTORE_SCRATCH
 
 entry_int_pic_ignore:
-	iretq
+	SAFE_IRET
 
 	.global	entry_int_pic_ignore
 	.global	entry_int7
 	.global	entry_intf
 
 #ifndef CONFIG_SCHED_PIT
-INTERRUPT(0x20,int0)
+INTERRUPT	0x20, int0
 #endif
-INTERRUPT(0x27,int7)
-INTERRUPT(0x2f,intf)
+INTERRUPT	0x27, int7
+INTERRUPT	0x2f, intf
 #ifndef CONFIG_SCHED_RTC
-INTERRUPT(0x28,int8)
+INTERRUPT	0x28, int8
 #endif
 
 /* system calls */
-#define SYSTEM_CALL(int,name)					\
-	GATE_ENTRY(int,entry_##name,ACC_PL_U | ACC_INTR_GATE) 	;\
-	.p2align 4		 	     	 		;\
-entry_##name:				      	 		;\
-	sub	$16, %rsp					;\
-	push	%rax						;\
-	mov	$(syscall_table+8*(int-0x30)), %rax		;\
+.macro	SYSTEM_CALL int, name
+	GATE_ENTRY	\int, entry_\name, (ACC_PL_U | ACC_INTR_GATE)
+	.p2align 4
+entry_\name:
+	cld
+	SWITCH_TO_KERNEL_CR3 0
+	sub	$16, %rsp
+	push	%rax
+	mov	$(syscall_table+8*(\int-0x30)), %rax
 	jmp	all_syscalls
+.endm
 
+	.section ".entry.text.syscalls", "ax", @progbits
 	.p2align 4
 	.type	all_syscalls,@function
 all_syscalls:
 	cld
 	SAVE_STATE
+	IA32_IBRS
 	ESP_TO_TCB_AT %rbx
-	testl	$Thread_alien_or_vcpu_user, OFS__THREAD__STATE (%rbx)
+	testl	$VAL__Thread_alien_or_vcpu_user, OFS__THREAD__STATE (%rbx)
 	jnz	alien_sys_call
 	RESET_THREAD_CANCEL_AT %rbx
 
@@ -340,19 +390,22 @@ ret_from_syscall:
 	RESTORE_STATE
 	pop	%rax
 	add	$16, %rsp
-	iretq
+	SAFE_IRET
 
-GATE_ENTRY(0x30,entry_sys_ipc_c,ACC_PL_U | ACC_INTR_GATE);
+/* TODO: remove old int 0x30 syscall entry as amd64 uses syscall */
+GATE_ENTRY	0x30, entry_sys_ipc_c, (ACC_PL_U | ACC_INTR_GATE)
 
         .p2align 4
 	.globl	entry_sys_ipc_c
 entry_sys_ipc_c:
 	cld
+	SWITCH_TO_KERNEL_CR3 0
 	sub	$16, %rsp
 	push	%rax
 	SAVE_STATE
+	IA32_IBRS_CLOBBER
 	ESP_TO_TCB_AT %rbx
-	testl	$Thread_alien_or_vcpu_user, OFS__THREAD__STATE (%rbx)
+	testl	$VAL__Thread_alien_or_vcpu_user, OFS__THREAD__STATE (%rbx)
 	jnz	alien_sys_ipc_c
 	RESET_THREAD_CANCEL_AT %rbx
 
@@ -362,7 +415,7 @@ in_sc_ipc1:
 	RESTORE_STATE
 	pop	%rax
 	add	$16, %rsp
-	iretq
+	SAFE_IRET
 
 	.globl	in_sc_ipc1
 
@@ -373,11 +426,12 @@ in_sc_ipc1:
 
 entry_sys_ipc_log:
 	cld
+	SWITCH_TO_KERNEL_CR3 0
 	sub	$16, %rsp
 	push	%rax
 	SAVE_STATE
 	ESP_TO_TCB_AT %rbx
-	testl	$Thread_alien_or_vcpu_user, OFS__THREAD__STATE (%rbx)
+	testl	$VAL__Thread_alien_or_vcpu_user, OFS__THREAD__STATE (%rbx)
 	jnz	alien_sys_ipc_log
 	RESET_THREAD_CANCEL_AT %rbx
 	call	*syscall_table
@@ -386,7 +440,7 @@ in_slow_ipc4:
 	RESTORE_STATE
 	pop	%rax
 	add	$16, %rsp
-	iretq
+	SAFE_IRET
 
 	.globl	in_slow_ipc4
 #endif // CONFIG_JDB
@@ -401,18 +455,18 @@ in_slow_ipc4:
 	.globl	in_timer_interrupt_slow
 
 
-SYSTEM_CALL(0x32,sys_invoke_debug)
+SYSTEM_CALL	0x32, sys_invoke_debug
 
 /* these functions are implemented in entry-native.S */
-GATE_ENTRY(0x0a,entry_vec0a_invalid_tss,ACC_PL_K | ACC_INTR_GATE)
-GATE_ENTRY(0x0f,entry_vec0f_apic_spurious_interrupt_bug,ACC_PL_K | ACC_INTR_GATE)
-GATE_ENTRY(APIC_IRQ_BASE + 3,entry_apic_error_interrupt,ACC_PL_K | ACC_INTR_GATE)
-GATE_ENTRY(APIC_IRQ_BASE + 0xf,entry_apic_spurious_interrupt,ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	0x0a, entry_vec0a_invalid_tss, (ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	0x0f, entry_vec0f_apic_spurious_interrupt_bug, (ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	(APIC_IRQ_BASE + 3), entry_apic_error_interrupt, (ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	(APIC_IRQ_BASE + 4), entry_apic_spurious_interrupt, (ACC_PL_K | ACC_INTR_GATE)
 
 #ifdef CONFIG_MP
-GATE_ENTRY(APIC_IRQ_BASE + 2, entry_ipi, ACC_PL_K | ACC_INTR_GATE)
-GATE_ENTRY(APIC_IRQ_BASE - 2, entry_debug_ipi, ACC_PL_K | ACC_INTR_GATE)
-GATE_ENTRY(APIC_IRQ_BASE - 1, entry_ipi_remote_request, ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	(APIC_IRQ_BASE + 2), entry_ipi, (ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	(APIC_IRQ_BASE - 2), entry_debug_ipi, (ACC_PL_K | ACC_INTR_GATE)
+GATE_ENTRY	(APIC_IRQ_BASE - 1), entry_ipi_remote_request, (ACC_PL_K | ACC_INTR_GATE)
 #endif
 
 GATE_INITTAB_END
@@ -428,6 +482,7 @@ alien_sys_ipc_log:
 alien_sys_call:
 	ALIEN_SYSCALL syscall="call *(%rax)" trap_target=_slowtraps
 
+	.section ".entry.text.upcalls", "ax", @progbits
 	.p2align
 	.globl	leave_by_trigger_exception
 leave_by_trigger_exception:
@@ -438,6 +493,8 @@ leave_by_trigger_exception:
 	pushq	$_slowtraps
 	jmp	thread_restore_exc_state
 
+
+#define OFS__VCPU_STATE__REGS_IRET (VAL__SIZEOF_TRAP_STATE - 40 + OFS__VCPU_STATE__TREX)
 
 	.p2align
 	.globl	leave_by_vcpu_upcall
@@ -450,7 +507,7 @@ leave_by_vcpu_upcall:
 	ESP_TO_TCB_AT %rcx
 	mov OFS__THREAD__USER_VCPU(%rcx), %rdi
 	mov OFS__THREAD__VCPU_STATE(%rcx), %rcx
-	add $(VAL__SIZEOF_TRAP_STATE - 40), %rcx
+	add $(OFS__VCPU_STATE__REGS_IRET), %rcx
 	mov SCRATCH_REGISTER_SIZE(%rsp),  %rdx
 	mov %rdx, (%rcx)                            /* RIP */
 	mov 8 + SCRATCH_REGISTER_SIZE(%rsp),  %rdx
@@ -495,13 +552,13 @@ leave_by_vcpu_upcall:
 
 	/*add SCRATCH_REGISTER_SIZE, %esp*/
 	mov %rdx, %rsp
-	mov -VAL__SIZEOF_TRAP_STATE + 40 + OFS__VCPU_STATE__ENTRY_SP(%rcx), %rax
+	mov -OFS__VCPU_STATE__REGS_IRET + OFS__VCPU_STATE__ENTRY_SP(%rcx), %rax
 	mov %rax, 24(%rsp)
-	mov -VAL__SIZEOF_TRAP_STATE + 40 + OFS__VCPU_STATE__ENTRY_IP(%rcx), %rax
+	mov -OFS__VCPU_STATE__REGS_IRET + OFS__VCPU_STATE__ENTRY_IP(%rcx), %rax
 	mov %rax, 0(%rsp)
 	movq $EFLAGS_IF, 16(%rsp)
         movq $(GDT_CODE_USER | SEL_PL_U), 8(%rsp)
-	iretq
+	SAFE_IRET
 
 	.p2align
 	.globl	vcpu_resume
@@ -516,6 +573,5 @@ vcpu_resume:
 	restore_all_regs
 	add $(2*8), %rsp
 	andq	$0x7f, 8(%rsp)			// if entered using syscall
-	orq	$EFLAGS_IF, 16(%rsp)		// if entered using syscall
-	iretq
+	SAFE_IRET
 

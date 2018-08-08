@@ -48,8 +48,7 @@ Jdb_kern_info_pci::show()
               Unsigned16 vendor; Pci::read_cfg(_device + 0x00, &vendor);
               Unsigned16 device; Pci::read_cfg(_device + 0x02, &device);
 
-              if ((vendor == 0xffff && device == 0xffff) ||
-                  (device == 0x0000 && device == 0x0000))
+              if ((vendor == 0xffff && device == 0xffff))
                 break;
 
               Unsigned8 classcode; Pci::read_cfg(_device + 0x0b, &classcode);
@@ -58,8 +57,9 @@ Jdb_kern_info_pci::show()
               if (classcode == 0x06 && subclass == 0x04)
                 buses++;
 
-              printf ("%02lx:%02lx.%1lx Class %02x%02x: %04x:%04x ",
-                  bus, dev, subdev, classcode, subclass, device, vendor);
+              printf("%02lx:%02lx.%1lx Class %02x%02x: %04x:%04x ",
+                     bus, dev, subdev, (unsigned)classcode,
+                     (unsigned)subclass, (unsigned)device, (unsigned)vendor);
               if (classcode < sizeof(classes)/sizeof(classes[0]))
                 printf("%s", classes[classcode]);
               putchar('\n');

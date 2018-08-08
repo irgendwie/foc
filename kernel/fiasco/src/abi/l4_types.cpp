@@ -384,14 +384,9 @@ public:
     Error        = 0x8000,
 
     /**
-     * The IPC operation did cross CPU boundaries.
-     */
-    X_cpu        = 0x4000,
-
-    /**
      * Combination of flags that are not pass through.
      */
-    Rcv_flags    = Error | X_cpu,
+    Rcv_flags    = Error,
   };
 
   /**
@@ -425,9 +420,16 @@ public:
     Label_log = -13L,          ///< Protocol ID for log / vcon objects.
     Label_scheduler = -14L,    ///< Protocol ID for scheduler objects.
     Label_factory = -15L,      ///< Protocol ID for factory objects.
-    Label_vm = -16L,           ///< Protocol ID for VM objects (used for create
+    Label_vm = -16L,           ///< Factory ID for VM objects (used for create
                                ///  operations on a factory).
+    Label_dma_space = -17L,    ///< Factory ID for an DMA address space
+    Label_irq_sender = -18L,   ///< Protocol for IRQ sender objects.
+    Label_irq_mux = -19L,      ///< Protocol for IRQ multiplexer objects.
     Label_semaphore = -20L,    ///< Protocol ID for semaphore objects.
+    Label_iommu = -22L,        ///< Protocol ID for IOMMUs
+    Label_debugger = -23L,     ///< Protocol ID for the debugger
+    Label_smc = -24L,          ///< Protocol ID for ARM SMC calls.
+    Max_factory_label = Label_iommu,
   };
 private:
   Mword _tag;
@@ -508,7 +510,7 @@ public:
    * @param clock Current value of kernel clock
    * @return The receive timeout in micro seconds.
    */
-  Unsigned64 microsecs_abs(Utcb *u) const;
+  Unsigned64 microsecs_abs(Utcb const *u) const;
 
 private:
   enum
@@ -547,13 +549,6 @@ struct L4_timeout_pair
 class L4_exception_ipc
 {};
 
-class L4_semaphore
-{
-public:
-  Smword counter;
-  Mword flags;
-};
-
 /**
  * Constants for error codes returned by kernel objects.
  */
@@ -565,6 +560,7 @@ public:
     EPerm         =  1, ///< Permission denied.
     ENoent        =  2, ///< Some object was not found.
     ENomem        = 12, ///< Out of memory.
+    EFault        = 14, ///< There was an unresolved page fault
     EBusy         = 16, ///< The object is busy, try again.
     EExists       = 17, ///< Some object does already exist.
     ENodev        = 19, ///< Objects of the specified type cannot be created.
@@ -574,6 +570,7 @@ public:
     EBadproto     = 39, ///< Protocol not supported by object.
 
     EAddrnotavail = 99, ///< The given address is not available.
+    EMsgtooshort  = 1001, ///< Incoming IPC message too short
   };
 };
 
@@ -660,16 +657,25 @@ INTERFACE [ia32 || ux]:
 EXTENSION class L4_exception_ipc
 {
 public:
-  enum { Msg_size = 16 };
+  enum { Msg_size = 19 };
 };
 
 //----------------------------------------------------------------------------
-INTERFACE [arm]:
+INTERFACE [arm && 32bit]:
 
 EXTENSION class L4_exception_ipc
 {
 public:
-  enum { Msg_size = 20 };
+  enum { Msg_size = 21 };
+};
+
+//----------------------------------------------------------------------------
+INTERFACE [arm && 64bit]:
+
+EXTENSION class L4_exception_ipc
+{
+public:
+  enum { Msg_size = 39 };
 };
 
 //----------------------------------------------------------------------------
@@ -678,7 +684,7 @@ INTERFACE [amd64]:
 EXTENSION class L4_exception_ipc
 {
 public:
-  enum { Msg_size = 23 };
+  enum { Msg_size = 26 };
 };
 
 //----------------------------------------------------------------------------
@@ -956,7 +962,7 @@ L4_timeout::microsecs_rel(Unsigned64 clock) const
 
 IMPLEMENT inline NEEDS[<minmax.h>]
 Unsigned64
-L4_timeout::microsecs_abs(Utcb *u) const
+L4_timeout::microsecs_abs(Utcb const *u) const
 {
   int idx = min<int>(_t & 0x3f, Utcb::Max_buffers);
   Utcb::Time_val const *top
@@ -971,7 +977,7 @@ L4_timeout::is_absolute() const
 
 PUBLIC inline
 Unsigned64
-L4_timeout::microsecs(Unsigned64 clock, Utcb *u) const
+L4_timeout::microsecs(Unsigned64 clock, Utcb const *u) const
 { 
   if (is_absolute())
     return microsecs_abs(u);

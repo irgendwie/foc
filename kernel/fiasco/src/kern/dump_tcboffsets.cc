@@ -3,14 +3,20 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <arpa/inet.h>
+#include <endian.h>
 #include "globalconfig.h"
 
 #ifndef CONFIG_BIG_ENDIAN
-#define TARGET_BYTE_ORDER(a) a
+#define TARGET_BYTE_ORDER(a) \
+              len == 8 ? htole64(a) \
+                       : (len == 4 ? htole32(a) \
+                                   : (len == 2 ? htole16(a) : a))
 #else
-#define TARGET_BYTE_ORDER(a) len == 4 ? htonl(a) : a
-#endif 
+#define TARGET_BYTE_ORDER(a) \
+              len == 8 ? htobe64(a) \
+                       : (len == 4 ? htobe32(a) \
+                                   : (len == 2 ? htobe16(a) : a))
+#endif
 
 #define READ_VAL \
   ({read(fd, &val, len); TARGET_BYTE_ORDER(val);})
@@ -27,6 +33,9 @@
 
 #define DUMP_CONSTANT(prefix, value) \
   printf("#define VAL__" #prefix " 0x%llx\n", READ_VAL);
+
+#define DUMP_THREAD_STATE(value) \
+  printf("#define VAL__" #value " 0x%llx\n", READ_VAL);
 
 #define DUMP_CAST_OFFSET(type, subtype) \
   printf("#define CAST__" #type "_TO_" #subtype " 0x%llx\n", READ_VAL);

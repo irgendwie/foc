@@ -106,6 +106,7 @@
 #define FEATX_OSXSAVE   0x08000000      // OSXSAVE
 #define FEATX_AVX       0x10000000      // AVX
 
+#define FEATX_IA32_TSC_ADJUST 0x00000002 // IA32 TSC Adjust available
 #define FEATX_SMEP      0x00000080      // Supervisor-Mode Execution Prevention
 
 // AMD: CPU Feature Flags, Fn80000001_ECX
@@ -132,6 +133,7 @@
 // Model Specific Registers
 #define MSR_TSC              0x010      // Time Stamp Counter
 #define MSR_IA32_FEATURE_CONTROL 0x03a  // Control Features in Intel 64 Processor
+#define MSR_IA32_TSC_ADJUST  0x03b      // TSC adjust value
 #define MSR_SYSENTER_CS      0x174      // Kernel Code Segment
 #define MSR_SYSENTER_ESP     0x175      // Kernel Syscall Entry
 #define MSR_SYSENTER_EIP     0x176      // Kernel Stack Pointer
@@ -148,6 +150,12 @@
 #define MSR_LASTINTFROMIP    0x1dd      // (P6)
 #define MSR_LASTINTTOIP      0x1de      // (P6)
 #define MSR_PAT              0x277      // PAT
+#define MSR_HWP_PM_ENABLE    0x770      // HWP enable/disable
+#define MSR_HWP_CAPABILITIES 0x771
+#define MSR_HWP_REQUEST_PKG  0x772
+#define MSR_HWP_INTERRUPT    0x773
+#define MSR_HWP_REQUEST      0x774
+#define MSR_HWP_STATUS       0x775
 
 // AMD64 Model Specific Registers
 #define MSR_EFER        0xc0000080      // Extended Feature Enable Register
@@ -157,6 +165,7 @@
 #define MSR_SFMASK      0xc0000084      // RFLAGS for Syscall
 #define MSR_FS_BASE     0xc0000100      // FS-Base
 #define MSR_GS_BASE     0xc0000101      // GS-Base
+#define MSR_KERNEL_GS_BASE 0xc0000102   // Kernel-GS-Base
 #define MSR_VM_CR       0xc0010114      // SVM
 #define MSR_VM_HSAVE_PA 0xc0010117      // SVM host state-save area
 

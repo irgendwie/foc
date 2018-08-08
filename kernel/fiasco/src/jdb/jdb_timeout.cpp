@@ -191,7 +191,7 @@ int
 Jdb_list_timeouts::get_type(Timeout *t)
 {
   for (Cpu_number i = Cpu_number::first(); i < Config::max_num_cpus(); ++i)
-    if (t == timeslice_timeout.cpu(i))
+    if (Per_cpu_data::valid(i) && (t == timeslice_timeout.cpu(i)))
       return Timeout_timeslice;
 
   // add others
@@ -388,6 +388,7 @@ Jdb_list_timeouts::list()
                   y = y_max;
                   break;
                 case KEY_RETURN:
+                case KEY_RETURN_2:
                   if (jdb_show_tcb != 0)
                     {
                       Thread *owner;

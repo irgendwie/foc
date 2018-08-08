@@ -77,8 +77,8 @@ IMPLEMENTATION:
 
 #include <cassert>
 
+#include "atomic.h"
 #include "config.h"
-#include "kdb_ke.h"
 #include "kip.h"
 #include "mem_layout.h"
 #include "mem_region.h"
@@ -89,7 +89,7 @@ static Kmem_alloc::Alloc _a;
 Kmem_alloc::Alloc *Kmem_alloc::a = &_a;
 unsigned long Kmem_alloc::_orig_free;
 Kmem_alloc::Lock Kmem_alloc::lock;
-Kmem_alloc* Kmem_alloc::_alloc;
+Kmem_alloc *Kmem_alloc::_alloc;
 
 PUBLIC static inline NEEDS[<cassert>]
 Kmem_alloc *
@@ -112,7 +112,7 @@ PROTECTED static
 void
 Kmem_alloc::allocator(Kmem_alloc *a)
 {
-  _alloc=a;
+  _alloc = a;
 }
 
 PUBLIC static FIASCO_INIT
@@ -143,11 +143,27 @@ Kmem_alloc::free(size_t o, void *p)
   unaligned_free(1UL << o, p);
 }
 
-PUBLIC 
+PUBLIC template<typename T> inline
+T *
+Kmem_alloc::alloc_array(unsigned elems)
+{
+  return new (this->unaligned_alloc(sizeof(T) * elems)) T[elems];
+}
+
+PUBLIC template<typename T> inline
+void
+Kmem_alloc::free_array(T *b, unsigned elems)
+{
+  for (unsigned i = 0; i < elems; ++i)
+    b[i].~T();
+  this->unaligned_free(b, sizeof(T) * elems);
+}
+
+PUBLIC
 void *
 Kmem_alloc::unaligned_alloc(unsigned long size)
 {
-  assert(size >=8 /*NEW INTERFACE PARANIOIA*/);
+  assert(size >= 8 /* NEW INTERFACE PARANIOIA */);
   void* ret;
 
   {
@@ -170,7 +186,7 @@ PUBLIC
 void
 Kmem_alloc::unaligned_free(unsigned long size, void *page)
 {
-  assert(size >=8 /*NEW INTERFACE PARANIOIA*/);
+  assert(size >= 8 /* NEW INTERFACE PARANIOIA */);
   auto guard = lock_guard(lock);
   a->free(page, size);
 }
@@ -181,26 +197,24 @@ unsigned long
 Kmem_alloc::create_free_map(Kip const *kip, Mem_region_map_base *map)
 {
   unsigned long available_size = 0;
-  Mem_desc const *md = kip->mem_descs();
-  Mem_desc const *const md_end = md + kip->num_mem_descs();
 
-  for (; md < md_end; ++md)
+  for (auto const &md: kip->mem_descs_a())
     {
-      if (!md->valid())
+      if (!md.valid())
 	{
-	  const_cast<Mem_desc*>(md)->type(Mem_desc::Undefined);
+	  const_cast<Mem_desc &>(md).type(Mem_desc::Undefined);
 	  continue;
 	}
 
-      if (md->is_virtual())
+      if (md.is_virtual())
 	continue;
 
-      unsigned long s = md->start();
-      unsigned long e = md->end();
+      unsigned long s = md.start();
+      unsigned long e = md.end();
 
       // Sweep out stupid descriptors (that have the end before the start)
 
-      switch (md->type())
+      switch (md.type())
 	{
 	case Mem_desc::Conventional:
 	  s = (s + Config::PAGE_SIZE - 1) & ~(Config::PAGE_SIZE - 1);
@@ -228,7 +242,6 @@ Kmem_alloc::create_free_map(Kip const *kip, Mem_region_map_base *map)
 
   return available_size;
 }
-
 
 PUBLIC template< typename Q >
 inline
@@ -269,31 +282,31 @@ PUBLIC inline NEEDS["mem_layout.h"]
 void Kmem_alloc::free_phys(size_t s, Address p)
 {
   void *va = (void*)Mem_layout::phys_to_pmem(p);
-  if((unsigned long)va != ~0UL)
+  if ((unsigned long)va != ~0UL)
     free(s, va);
 }
 
 PUBLIC template< typename Q >
 inline
-void 
+void
 Kmem_alloc::q_free_phys(Q *quota, size_t order, Address obj)
 {
   free_phys(order, obj);
-  quota->free(1UL<<order);
+  quota->free(1UL << order);
 }
 
 PUBLIC template< typename Q >
 inline
-void 
+void
 Kmem_alloc::q_free(Q *quota, size_t order, void *obj)
 {
   free(order, obj);
-  quota->free(1UL<<order);
+  quota->free(1UL << order);
 }
 
 PUBLIC template< typename Q >
 inline
-void 
+void
 Kmem_alloc::q_unaligned_free(Q *quota, size_t size, void *obj)
 {
   unaligned_free(size, obj);
@@ -301,16 +314,13 @@ Kmem_alloc::q_unaligned_free(Q *quota, size_t size, void *obj)
 }
 
 
-
-#include "atomic.h"
-
 Kmem_alloc_reaper::Reaper_list Kmem_alloc_reaper::mem_reapers;
 
 PUBLIC inline NEEDS["atomic.h"]
 Kmem_alloc_reaper::Kmem_alloc_reaper(size_t (*reap)(bool desperate))
-  : _reap(reap)
+: _reap(reap)
 {
-  mem_reapers.add(this, mp_cas<cxx::S_list_item*>);
+  mem_reapers.add(this, mp_cas<cxx::S_list_item *>);
 }
 
 PUBLIC static
@@ -321,9 +331,7 @@ Kmem_alloc_reaper::morecore(bool desperate = false)
 
   for (Reaper_list::Const_iterator reaper = mem_reapers.begin();
        reaper != mem_reapers.end(); ++reaper)
-    {
-      freed += reaper->_reap(desperate);
-    }
+    freed += reaper->_reap(desperate);
 
   return freed;
 }

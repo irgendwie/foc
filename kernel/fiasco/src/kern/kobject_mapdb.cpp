@@ -23,7 +23,15 @@ public:
   {
     friend class Kobject_mapdb;
     friend class Kobject_mapdb::Iterator;
-    Kobject_mappable* frame;
+    // initializing frame is not needed but GCC complains with
+    // "may be used uninitialized" in map_util-objs map ...
+    // triggering a warning in Kobject_mapdb::grant
+    //
+    // As common perception seems to be that compiling without warnings is
+    // more important than runtime we always initialize frame to 0 in the
+    // constructor, even if this would probably cause more harm than good if
+    // used with a 0 pointer as there could be a page mapped at 0 as well
+    Kobject_mappable* frame = 0;
 
   public:
     inline size_t size() const;
@@ -157,7 +165,7 @@ Kobject_mapdb::flush(const Frame& f, Mapping *m, L4_map_mask mask,
   if (flush)
     {
       for (Mapping::List::Iterator i = f.frame->_root.begin();
-           i != Mapping::List::end(); ++i)
+           i != f.frame->_root.end(); ++i)
 	{
 	  Obj::Entry *e = static_cast<Obj::Entry*>(*i);
 	  if (e->ref_cnt()) // counted

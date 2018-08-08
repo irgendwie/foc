@@ -3,7 +3,7 @@ INTERFACE:
 #include "types.h"
 
 //----------------------------------------------------------------------------
-IMPLEMENTATION[arm && !armv6plus]:
+IMPLEMENTATION[arm && !arm_v6plus]:
 
 PRIVATE static inline NOEXPORT NEEDS["types.h"]
 void
@@ -20,7 +20,7 @@ Sys_call_page::set_utcb_get_code(Unsigned32 *sys_calls)
 }
 
 //----------------------------------------------------------------------------
-IMPLEMENTATION[arm && armv6plus]:
+IMPLEMENTATION[arm && arm_v6plus]:
 
 PRIVATE static inline NOEXPORT NEEDS["types.h"]
 void
@@ -50,6 +50,28 @@ Sys_call_page::set_utcb_get_code(Unsigned32 *sys_calls)
 }
 
 //----------------------------------------------------------------------------
+IMPLEMENTATION[arm && !arm_v7plus]:
+
+PRIVATE static inline NOEXPORT NEEDS["types.h"]
+void
+Sys_call_page::set_dmb(Unsigned32 *m)
+{
+  m[0] = 0xee070fba; // mcr 15, 0, r0, cr7, cr10, {5}
+  m[1] = 0xe1a0f00e; // mov pc, lr
+}
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION[arm && arm_v7plus]:
+
+PRIVATE static inline NOEXPORT NEEDS["types.h"]
+void
+Sys_call_page::set_dmb(Unsigned32 *m)
+{
+  m[0] = 0xf57ff05f; // dmb sy
+  m[1] = 0xe12fff1e; // bx lr
+}
+
+//----------------------------------------------------------------------------
 IMPLEMENTATION:
 
 #include <cstring>
@@ -67,11 +89,12 @@ Sys_call_page::init()
     panic("FIASCO: can't allocate system-call page.\n");
 
   for (unsigned i = 0; i < Config::PAGE_SIZE / sizeof(Unsigned32); ++i)
-    sys_calls[i] = Proc::Is_hyp
-                   ? 0xe1400070  // hvc
-                   : 0xef000000; // svc
+    sys_calls[i] = 0xef000000; // svc
 
   set_utcb_get_code(sys_calls + (0xf00 / sizeof(Unsigned32)));
+
+  set_dmb(sys_calls + (0xf40 / sizeof(Unsigned32)));
+
   Mem_unit::flush_cache();
 
   Kernel_task::map_syscall_page(sys_calls);

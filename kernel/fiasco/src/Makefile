@@ -1,11 +1,9 @@
 srcdir		?= NOT_SET
 tooldir		:= $(srcdir)/../tool
 
-CONFIG_BANNER_STRING ?= "Fiasco - prepare for world domination"
-
 .PHONY: all do-all test-all config textconfig menuconfig xconfig \
         oldconfig regenconfig mrproper doc help update nconfig \
-        savedefconfig listnewconfig oldnoconfig oldaskconfig
+        savedefconfig listnewconfig oldnoconfig oldaskconfig FORCE
 
 all:
 
@@ -49,11 +47,12 @@ all $(filter config %config,$(MAKECMDGOALS)):
 
 else # srcdir != NOT_SET
 
-all: globalconfig.h
+all: globalconfig.h globalconfig.tags
 
 ifeq ($(filter config %config,$(MAKECMDGOALS)),)
 
 -include globalconfig.out
+-include globalconfig.tags
 
 # use patsubst here to prevent confusion of syntax highlighting editors :-)
 CONFIG_XARCH	:= $(patsubst "%",%,$(CONFIG_XARCH))
@@ -81,6 +80,9 @@ else # ! no ABI
 # .Modules.deps, then restart using Makefile.sub1, Makefile.sub2.
 #
 
+$(srcdir)/Makeconf: globalconfig.tags globalconfig.out
+.PRECIOUS: globalconfig.tags
+
 # Read Make configuration
 include $(srcdir)/Makeconf
 
@@ -99,15 +101,16 @@ ALL = $(foreach subsys, $(SUBSYSTEMS), $($(subsys)) $($(subsys)_EXTRA))
 $(foreach m, $(GENERATED_MODULES), auto/stamp-$(m).ready): $(MODULES_FILES)
 
 .PRECIOUS: .Modules.deps
-.Modules.deps: $(MODULES_FILES) globalconfig.h source
+.Modules.deps: $(MODULES_FILES) globalconfig.h globalconfig.tags
 	@mkdir -p auto
 	@echo "Cleaning up build directory"
-	$(VERBOSE)$(RM_R) *.o fiasco *.d .*.d .*.d.new *.d.new
+	$(VERBOSE)$(RM_R) *.lds *.o fiasco *.d .*.d .*.d.new *.d.new
 	$(VERBOSE)$(RM_R) auto/*.cc auto/*.h auto/*.S auto/stamp-*.ready
 	@echo "Creating $@"
 	@($(foreach mod, $(GENERATED_MODULES),				\
 	    echo 'auto/stamp-$(mod).ready:				\
 		  $(addsuffix .cpp,$(call eval_impl,$(mod)))';		\
+	    $(foreach cpp, $(call eval_impl,$(mod)), echo '$(cpp).cpp:';) \
 	    echo '$(patsubst %,auto/%.cc,$(call eval_impl,$(mod)))'	\
 		 'auto/$(mod).h auto/$(mod)_i.h:			\
 		  auto/stamp-$(mod).ready ;				\
@@ -135,9 +138,9 @@ endif # _modules_read_
 # 
 
 .PHONY: create-sources
-create-sources: $(MODULES_FILES) globalconfig.h .Modules.deps 
+create-sources: $(MODULES_FILES) globalconfig.h globalconfig.tags .Modules.deps source
 	$(MAKE) srcdir=$(srcdir) objbase=$(objbase) -f $(srcdir)/Makefile.sub1 
-auto/stamp-%.ready: $(MODULES_FILES) globalconfig.h .Modules.deps 
+auto/stamp-%.ready: $(MODULES_FILES) globalconfig.h globalconfig.tags .Modules.deps 
 	$(MAKE) srcdir=$(srcdir) objbase=$(objbase) -f $(srcdir)/Makefile.sub1 $@
 
 DEPS_FILES=DEPS DEPS.a4 DEPS.tred
@@ -146,10 +149,10 @@ DEPS_FILES=DEPS DEPS.a4 DEPS.tred
 # Makefile.sub2: Create everything else.
 #
 all doc $(addsuffix .ps,$(DEPS_FILES)) $(addsuffix .svg,$(DEPS_FILES)) TAGS tags: \
-  $(MODULES_FILES) .Modules.deps create-sources globalconfig.h
+  $(MODULES_FILES) .Modules.deps create-sources globalconfig.h globalconfig.tags
 	$(MAKE) srcdir=$(srcdir) objbase=$(objbase) -f $(srcdir)/Makefile.sub2 $@
 
-%.o %_t: $(MODULES_FILES) .Modules.deps create-sources globalconfig.h
+%.o %_t: $(MODULES_FILES) .Modules.deps create-sources globalconfig.h globalconfig.tags
 	$(MAKE) srcdir=$(srcdir) objbase=$(objbase) -f $(srcdir)/Makefile.sub2 $@
 
 
@@ -174,16 +177,18 @@ endif # ! no XARCH
 endif # ! config xconfig menuconfig oldconfig
 
 auto:
-	test -e auto || mkdir auto
+	mkdir -p auto
 
 source:
 	test -e source || ln -sf $(srcdir) source
 
 
-BSP_DIR            := $(srcdir)/kern/arm/bsp $(srcdir)/kern/ppc32/bsp $(srcdir)/kern/sparc/bsp
+BSP_DIR            := $(wildcard $(srcdir)/kern/*/bsp)
 KCONFIG_FILE       := Kconfig
 KCONFIG_SRC_FILE   := $(srcdir)/Kconfig
 KCONFIG_BSP_FILES  := $(shell find $(BSP_DIR) -name Kconfig -follow -print)
+KCONFIG_ARCH_FILES := $(wildcard $(srcdir)/kern/*/Kconfig)
+KCONFIG_PART_FILES := $(sort $(KCONFIG_ARCH_FILES)) $(sort $(KCONFIG_BSP_FILES))
 
 kconfig_call = $(MAKE) -C $(tooldir)/kconfig O=$(objbase) \
 	       Kconfig=$(KCONFIG_FILE) \
@@ -196,25 +201,34 @@ kconfig_call = $(MAKE) -C $(tooldir)/kconfig O=$(objbase) \
 	       INCLUDE_SPARC=$(INCLUDE_SPARC) \
 	       fiasco_srcdir=$(srcdir)/..
 
-$(KCONFIG_FILE): $(KCONFIG_SRC_FILE) $(KCONFIG_BSP_FILES) $(srcdir)/Makefile
-	@$(tooldir)/gen_kconfig $(KCONFIG_SRC_FILE) $(KCONFIG_FILE) $(KCONFIG_BSP_FILES)
+# save config file dependencies to detect BSP removals
+.$(KCONFIG_FILE).parts: FORCE
+	@echo '$(KCONFIG_PART_FILES)' | cmp -s - $@ || echo '$(KCONFIG_PART_FILES)' > $@
+
+$(KCONFIG_FILE): $(KCONFIG_SRC_FILE) $(KCONFIG_PART_FILES) .$(KCONFIG_FILE).parts \
+                 $(srcdir)/Makefile
+	@$(tooldir)/gen_kconfig $(KCONFIG_SRC_FILE) $(KCONFIG_FILE) \
+	                        $(KCONFIG_PART_FILES)
 
 globalconfig.out: $(KCONFIG_FILE)
 	+$(kconfig_call) oldconfig
 
+globalconfig.tags: globalconfig.out
+	$(tooldir)/config-tags $< >$@
+
 globalconfig.h: globalconfig.out
-	+$(kconfig_call) silentoldconfig
+	+$(kconfig_call) syncconfig
 
 config: $(KCONFIG_FILE)
 	+$(kconfig_call) menuconfig
-	+$(kconfig_call) silentoldconfig
+	+$(kconfig_call) syncconfig
 
 textconfig: $(KCONFIG_FILE)
-	+$(kconfig_call) config silentoldconfig
+	+$(kconfig_call) config syncconfig
 
 menuconfig oldconfig xconfig gconfig nconfig randconfig allyesconfig allnoconfig: $(KCONFIG_FILE)
 	+$(kconfig_call) $@
-	+$(kconfig_call) silentoldconfig
+	+$(kconfig_call) syncconfig
 
 listnewconfig olddefconfig oldnoconfig savedefconfig: $(KCONFIG_FILE)
 	+$(kconfig_call) $@
@@ -240,12 +254,12 @@ clean: $(foreach subsys, $(SUBSYSTEMS), clean-$(subsys))
 	$(RM) $(ALL)
 	$(RM) *.o fiasco
 	$(RM) auto/*.cc auto/*.h auto/*.S auto/stamp-*.ready
-	$(RM) .Clean-auto .Compiler-config
+	$(RM) .Clean-auto .Compiler-config .$(KCONFIG_FILE).parts
 
 cleanall: clean $(foreach subsys, $(SUBSYSTEMS), cleanall-$(subsys))
 	$(foreach subdir, $(SUBDIRS), $(RM) $(subdir)/*.d $(subdir)/.*.d)
 	$(RM) *.d .*.d .*.d.new *.d.new *~
-	$(RM) globalconfig.h globalconfig.h.old Circular
+	$(RM) globalconfig.h globalconfig.tags globalconfig.h.old Circular
 	$(RM) .Modules.deps source
 
 mrproper: cleanall

@@ -62,8 +62,17 @@ public:
     Unsigned8 len;
   } __attribute__((packed));
 
+  struct Lapic : public Apic_head
+  {
+    enum { ID = LAPIC };
+    Unsigned8 apic_processor_id;
+    Unsigned8 apic_id;
+    Unsigned32 flags;
+  } __attribute__((packed));
+
   struct Io_apic : public Apic_head
   {
+    enum { ID = IOAPIC };
     Unsigned8 id;
     Unsigned8 res;
     Unsigned32 adr;
@@ -72,6 +81,7 @@ public:
 
   struct Irq_source : public Apic_head
   {
+    enum { ID = Irq_src_ovr };
     Unsigned8  bus;
     Unsigned8  src;
     Unsigned32 irq;
@@ -99,6 +109,7 @@ IMPLEMENTATION:
 
 #include "boot_alloc.h"
 #include "kmem.h"
+#include "warn.h"
 #include <cctype>
 
 Acpi_sdt Acpi::_sdt;
@@ -138,10 +149,10 @@ public:
 
 
 static void
-print_acpi_id(char const *id, unsigned len)
+print_acpi_id(char const *id, int len)
 {
   char ID[len];
-  for (unsigned i = 0; i < len; ++i)
+  for (int i = 0; i < len; ++i)
     ID[i] = isalnum(id[i]) ? id[i] : '.';
   printf("%.*s", len, ID);
 }
@@ -149,7 +160,7 @@ print_acpi_id(char const *id, unsigned len)
 PUBLIC void
 Acpi_rsdp::print_info() const
 {
-  printf("ACPI: RSDP[%p]\tr%02x OEM:", this, rev);
+  printf("ACPI: RSDP[%p]\tr%02x OEM:", this, (unsigned)rev);
   print_acpi_id(oem, 6);
   printf("\n");
 }
@@ -159,7 +170,7 @@ Acpi_table_head::print_info() const
 {
   printf("ACPI: ");
   print_acpi_id(signature, 4);
-  printf("[%p]\tr%02x OEM:", this, rev);
+  printf("[%p]\tr%02x OEM:", this, (unsigned)rev);
   print_acpi_id(oem_id, 6);
   printf(" OEMTID:");
   print_acpi_id(oem_tid, 8);
@@ -204,8 +215,8 @@ Acpi::_map_table_head(Unsigned64 phys)
   // is the acpi address bigger that our handled physical addresses
   if (Acpi_helper_get_msb<(sizeof(phys) > sizeof(Address))>::msb(phys))
     {
-      printf("ACPI: cannot map phys address %llx, out of range (%zdbit)\n",
-             (unsigned long long)phys, sizeof(Address) * 8);
+      printf("ACPI: cannot map phys address %llx, out of range (%ubit)\n",
+             (unsigned long long)phys, (unsigned)sizeof(Address) * 8);
       return 0;
     }
 
@@ -243,7 +254,7 @@ Acpi_sdt::map_entry(unsigned idx, T phys)
 {
   if (idx >= _num_tables)
     {
-      printf("ACPI: table index out of range (%d >= %d)\n", idx, _num_tables);
+      printf("ACPI: table index out of range (%u >= %u)\n", idx, _num_tables);
       return 0;
     }
 
@@ -256,16 +267,19 @@ PUBLIC static
 void
 Acpi::init_virt()
 {
+  enum { Print_info = 0 };
+
   if (_init_done)
     return;
   _init_done = 1;
 
-  printf("ACPI-Init\n");
+  if (Print_info)
+    printf("ACPI-Init\n");
 
   Acpi_rsdp const *rsdp = Acpi_rsdp::locate();
   if (!rsdp)
     {
-      printf("ACPI: Could not find RSDP, skip init\n");
+      WARN("ACPI: Could not find RSDP, skip init\n");
       return;
     }
 
@@ -275,14 +289,17 @@ Acpi::init_virt()
     {
       Acpi_xsdt_p const *x = Kmem::dev_map.map((const Acpi_xsdt_p *)rsdp->xsdt_phys);
       if (x == (Acpi_xsdt_p const *)~0UL)
-        printf("ACPI: Could not map XSDT\n");
+        WARN("ACPI: Could not map XSDT\n");
       else if (!x->checksum_ok())
-        printf("ACPI: Checksum mismatch in XSDT\n");
+        WARN("ACPI: Checksum mismatch in XSDT\n");
       else
         {
           _sdt.init(x);
-          x->print_info();
-          _sdt.print_summary();
+          if (Print_info)
+            {
+              x->print_info();
+              _sdt.print_summary();
+            }
           return;
         }
     }
@@ -291,14 +308,17 @@ Acpi::init_virt()
     {
       Acpi_rsdt_p const *r = Kmem::dev_map.map((const Acpi_rsdt_p *)(unsigned long)rsdp->rsdt_phys);
       if (r == (Acpi_rsdt_p const *)~0UL)
-        printf("ACPI: Could not map RSDT\n");
+        WARN("ACPI: Could not map RSDT\n");
       else if (!r->checksum_ok())
-        printf("ACPI: Checksum mismatch in RSDT\n");
+        WARN("ACPI: Checksum mismatch in RSDT\n");
       else
         {
           _sdt.init(r);
-          r->print_info();
-          _sdt.print_summary();
+          if (Print_info)
+            {
+              r->print_info();
+              _sdt.print_summary();
+            }
           return;
         }
     }
@@ -419,6 +439,14 @@ Acpi_madt::find(Unsigned8 type, int idx) const
   return 0;
 }
 
+PUBLIC template<typename T> inline
+T const *
+Acpi_madt::find(int idx) const
+{
+  return static_cast<T const *>(find(T::ID, idx));
+}
+
+
 // ------------------------------------------------------------------------
 IMPLEMENTATION [ia32,amd64]:
 
@@ -449,15 +477,13 @@ Acpi_rsdp::locate()
     BDA_EBDA_SEGMENT       = 0x00040E,
   };
 
-  // If we are booted from UEFI, bootstrap reads the RDSP pointer from
+  // If we are booted from UEFI, bootstrap reads the RSDP pointer from
   // UEFI and creates a memory descriptor with sub type 5 for it
-  Mem_desc *md = Kip::k()->mem_descs();
-  Mem_desc const *const md_end = md + Kip::k()->num_mem_descs();
-  for (; md < md_end; ++md)
-    if (   md->type() == Mem_desc::Info
-        && md->ext_type() == Mem_desc::Info_acpi_rsdp)
+  for (auto const &md: Kip::k()->mem_descs_a())
+    if (   md.type() == Mem_desc::Info
+        && md.ext_type() == Mem_desc::Info_acpi_rsdp)
       {
-        Acpi_rsdp const *r = Acpi::map_table_head<Acpi_rsdp>(md->start());
+        Acpi_rsdp const *r = Acpi::map_table_head<Acpi_rsdp>(md.start());
         if (   Acpi::check_signature(r->signature, "RSD PTR ")
             && r->checksum_ok())
           return r;

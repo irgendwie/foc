@@ -45,15 +45,15 @@ exit_question()
   Proc::cli();
   exit_question_active = 1;
 
-  Pic::Status irqs = Pic::disable_all_save();
+  Unsigned16 irqs = Pic::disable_all_save();
   if (Config::getchar_does_hlt_works_ok)
     {
       Timer_tick::set_vectors_stop();
-      Timer_tick::enable(Cpu_number::boot_cpu()); // hmexit alway on CPU 0
+      Timer_tick::enable(Cpu_number::boot_cpu()); // hm, exit always on CPU 0
       Proc::sti();
     }
 
-  // make sure that we don't acknowledg the exit question automatically
+  // make sure that we don't acknowledge the exit question automatically
   Kconsole::console()->change_state(Console::PUSH, 0, ~Console::INENABLED, 0);
   puts("\nReturn reboots, \"k\" enters L4 kernel debugger...");
 
@@ -78,8 +78,6 @@ main_arch()
 {
   // console initialization
   set_exit_question(&exit_question);
-
-  //Pic::disable_all_save();
 }
 
 
@@ -105,43 +103,62 @@ IMPLEMENTATION[(ia32,amd64) && mp]:
 
 int FIASCO_FASTCALL boot_ap_cpu() __asm__("BOOT_AP_CPU");
 
+static void FIASCO_NORETURN
+stop_booting_ap_cpu(char const *msg, Unsigned32 apic_id)
+{
+  extern Spin_lock<Mword> _tramp_mp_spinlock;
+  printf("%s, disabling CPU: %x\n", msg, apic_id);
+  _tramp_mp_spinlock.clear();
+
+  while (1)
+    Proc::halt();
+}
+
 int FIASCO_FASTCALL boot_ap_cpu()
 {
-  Cpu_number _cpu = Apic::find_cpu(Apic::get_id());
+  Apic::activate_by_msr();
+
+  Unsigned32 apic_id = Apic::get_id();
+  Cpu_number _cpu = Apic::find_cpu(apic_id);
   bool cpu_is_new = false;
-  static Cpu_number last_cpu; // keep track of the last cpu ever appeared
+
+  // keep track of the last cpu ever appeared
+  static Cpu_number last_cpu = Cpu_number::first();
   if (_cpu == Cpu_number::nil())
     {
-      _cpu = ++last_cpu; // 0 is the boot cpu, so pre increment
+      if (Kernel_thread::boot_deterministic)
+        {
+          _cpu = Kernel_thread::find_cpu_num_by_apic_id(apic_id);
+          if (Cpu_number::nil() == _cpu)
+            stop_booting_ap_cpu("Previously unknown CPU", apic_id);
+        }
+      else
+        _cpu = ++last_cpu;
+
       cpu_is_new = true;
     }
 
   if (cpu_is_new && !Per_cpu_data_alloc::alloc(_cpu))
-    {
-      extern Spin_lock<Mword> _tramp_mp_spinlock;
-      printf("CPU allocation failed for CPU%u, disabling CPU.\n",
-             cxx::int_value<Cpu_number>(_cpu));
-      _tramp_mp_spinlock.clear();
-      while (1)
-        Proc::halt();
-    }
+    stop_booting_ap_cpu("CPU allocation failed", apic_id);
 
   if (cpu_is_new)
     Per_cpu_data::run_ctors(_cpu);
 
   Cpu &cpu = Cpu::cpus.cpu(_cpu);
 
-  Idt::load();
 
   if (cpu_is_new)
     {
       Kmem::init_cpu(cpu);
+      Idt::init_current_cpu();
       Apic::init_ap();
       Apic::apic.cpu(_cpu).construct(_cpu);
       Ipi::init(_cpu);
     }
   else
     {
+      Kmem::resume_cpu(_cpu);
+      Idt::load();
       cpu.pm_resume();
       Pm_object::run_on_resume_hooks(_cpu);
     }
@@ -149,10 +166,7 @@ int FIASCO_FASTCALL boot_ap_cpu()
   Timer::init(_cpu);
 
   if (cpu_is_new)
-    {
-      Apic::check_still_getting_interrupts();
-      Platform_control::init(_cpu);
-    }
+    Platform_control::init(_cpu);
 
   if (Koptions::o()->opt(Koptions::F_loadcnt))
     Perf_cnt::init_ap();

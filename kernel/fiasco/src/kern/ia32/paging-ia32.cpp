@@ -123,8 +123,8 @@ Pte_ptr::set_attribs(Page::Attr attr)
 }
 
 PUBLIC inline
-void
-Pte_ptr::create_page(Phys_mem_addr addr, Page::Attr attr)
+Mword
+Pte_ptr::make_page(Phys_mem_addr addr, Page::Attr attr)
 {
   Mword r = (level < Pdir::Depth) ? (Mword)Pse_bit : 0;
   typedef L4_fpage::Rights R;
@@ -137,7 +137,14 @@ Pte_ptr::create_page(Phys_mem_addr addr, Page::Attr attr)
   if (attr.type == T::Buffered()) r |= Page::BUFFERED;
   if (attr.type == T::Uncached()) r |= Page::NONCACHEABLE;
   if (attr.kern & K::Global()) r |= global();
-  *pte = cxx::int_value<Phys_mem_addr>(addr) | r | Valid;
+  return cxx::int_value<Phys_mem_addr>(addr) | r | Valid;
+}
+
+PUBLIC inline
+void
+Pte_ptr::set_page(Mword p)
+{
+  write_now(pte, p);
 }
 
 PUBLIC inline
@@ -165,37 +172,6 @@ Pte_ptr::attribs() const
   // level mappings
   return Page::Attr(r, t);
 }
-
-PUBLIC inline
-bool
-Pte_ptr::add_attribs(Page::Attr attr)
-{
-  typedef L4_fpage::Rights R;
-  unsigned long a = 0;
-
-  if (attr.rights & R::W())
-    a = Writable;
-
-  if (attr.rights & R::X())
-    a |= XD;
-
-  if (!a)
-    return false;
-
-  auto p = access_once(pte);
-  auto o = p;
-  p ^= XD;
-  p |= a;
-  p ^= XD;
-
-  if (o != p)
-    {
-      write_now(pte, p);
-      return true;
-    }
-  return false;
-}
-
 PUBLIC inline
 void
 Pte_ptr::add_attribs(Mword attr)
@@ -262,6 +238,28 @@ Pte_ptr::del_rights(L4_fpage::Rights r)
     *pte |= XD;
 }
 
+//---------------------------------------------------------------------------
+IMPLEMENTATION [(ia32 || amd64 || ux) && kernel_isolation]:
+
+PUBLIC static inline
+void
+Pt_entry::enable_global()
+{}
+
+/**
+ * Global entries are entries that are not automatically flushed when the
+ * page-table base register is reloaded. They are intended for kernel data
+ * that is shared between all tasks.
+ * @return global page-table--entry flags
+ */
+PUBLIC static inline
+Unsigned32
+Pt_entry::global()
+{ return 0; }
+
+//---------------------------------------------------------------------------
+IMPLEMENTATION [(ia32 || amd64 || ux) && !kernel_isolation]:
+
 Unsigned32 Pt_entry::_cpu_global = Pt_entry::L4_global;
 
 PUBLIC static inline
@@ -282,6 +280,7 @@ Pt_entry::global()
 
 
 //--------------------------------------------------------------------------
+IMPLEMENTATION [ia32 || amd64 || ux]:
 #include "cpu.h"
 #include "mem_layout.h"
 #include "regdefs.h"

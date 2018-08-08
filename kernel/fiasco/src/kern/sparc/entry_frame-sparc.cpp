@@ -5,6 +5,7 @@ INTERFACE[sparc]:
 EXTENSION class Syscall_frame
 {
   public:
+    Mword dummy;
     Mword r[30]; //{r0, r2, r3, ..., r10, r13 .., r31, ip
     void dump() const;
 };
@@ -110,10 +111,6 @@ Return_frame::user_mode()
 //---------------------------------------------------------------------------
 //TODO cbass: set registers properly 
 IMPLEMENT inline
-Mword Syscall_frame::next_period() const
-{ return false; }
-
-IMPLEMENT inline
 void Syscall_frame::from(Mword id)
 { r[5] = id; /*r6*/ }
 
@@ -148,3 +145,7 @@ IMPLEMENT inline
 void Syscall_frame::tag(L4_msg_tag const &tag)
 { r[2] = tag.raw(); /*r3*/ }
 
+IMPLEMENT inline
+Mword
+Return_frame::ip_syscall_page_user() const
+{ return Return_frame::srr0; }

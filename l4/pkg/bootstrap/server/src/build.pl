@@ -30,11 +30,7 @@ my $compress      = $ENV{OPT_COMPRESS}  || 0;
 my $strip         = $ENV{OPT_STRIP}     || 1;
 my $output_dir    = $ENV{OUTPUT_DIR}    || '.';
 my $make_inc_file = $ENV{MAKE_INC_FILE} || "mod.make.inc";
-
-my $flags_cc     = "";
-$flags_cc = "-m32" if $arch eq 'x86';
-$flags_cc = "-m64" if $arch eq 'amd64';
-
+my $flags_cc      = $ENV{FLAGS_CC}      || '';
 
 my $modulesfile      = $ARGV[1];
 my $entryname        = $ARGV[2];
@@ -58,16 +54,10 @@ sub write_to_file
   close A;
 }
 
-sub first_word($)
-{
-  (split /\s+/, shift)[0]
-}
-
 # build object files from the modules
-sub build_obj($$$)
+sub build_obj
 {
-  my ($cmdline, $modname, $no_strip) = @_;
-  my $_file = first_word($cmdline);
+  my ($_file, $cmdline, $modname, $no_strip) = @_;
 
   my $file = L4::ModList::search_file($_file, $module_path)
     || die "Cannot find file $_file! Used search path: $module_path";
@@ -100,25 +90,17 @@ sub build_obj($$$)
   my $md5_compr = $c_compr->hexdigest;
   my $md5_uncompr = $c_unc->hexdigest;
 
-  my $section_attr = ($arch eq 'x86' || $arch eq 'amd64' || $arch eq 'ppc32'
+  my $section_attr = ($arch ne 'sparc' && $arch ne 'arm'
        ? #'"a", @progbits' # Not Xen
          '\"awx\", @progbits' # Xen
        : '#alloc' );
 
   write_to_file("$modname.extra.c",qq|
-    struct Mi {
-      void const *start;
-      unsigned size;
-      unsigned size_uncompr;
-      char const *name;
-      char const *cmdline;
-      char const *md5sum_compr;
-      char const *md5sum_uncompr;
-    } __attribute__((packed));
+    #include "mod_info.h"
 
     extern char const _binary_${modname}_start[];
 
-    struct Mi const _binary_${modname}_info
+    struct Mod_info const _binary_${modname}_info
     __attribute__((section(".module_info"), aligned(4))) =
     {
       _binary_${modname}_start, $size, $uncompressed_size,
@@ -135,6 +117,7 @@ sub build_obj($$$)
   |);
 
   system("$prog_cc $flags_cc -c -o $modname.bin $modname.extra.c");
+  die "Assembling $modname failed" if $?;
   unlink("$modname.extra.c", "$modname.obj", "$modname.ugz");
 }
 
@@ -147,6 +130,7 @@ sub build_mbi_modules_obj($@)
   # generate mbi module structures
   write_to_file("mbi_modules.c", qq|char const _mbi_cmdline[] = "$cmdline";|);
   system("$prog_cc $flags_cc -c -o mbi_modules.bin mbi_modules.c");
+  die "Compiling mbi_modules.bin failed" if $?;
   unlink("mbi_modules.c");
 
 }
@@ -167,7 +151,7 @@ sub build_objects(@)
   build_mbi_modules_obj($entry{bootstrap}{cmdline}, @mods);
 
   for (my $i = 0; $i < @mods; $i++) {
-    build_obj($mods[$i]->{cmdline}, $mods[$i]->{modname},
+    build_obj($mods[$i]->{command}, $mods[$i]->{cmdline}, $mods[$i]->{modname},
 	      $mods[$i]->{type} =~ /.+-nostrip$/);
     $objs .= " $output_dir/$mods[$i]->{modname}.bin";
   }
@@ -179,19 +163,36 @@ sub build_objects(@)
   write_to_file($make_inc_file, $make_inc_str);
 }
 
-
-sub list_files(@)
+sub get_files
 {
   my %entry = @_;
-  print join(' ', map { L4::ModList::search_file_or_die(first_word($_->{cmdline}),
-                                                                   $module_path) }
-                      @{$entry{mods}}), "\n";
+  map { L4::ModList::search_file_or_die($_->{command}, $module_path) }
+      @{$entry{mods}};
+}
+
+sub list_files
+{
+  print join(' ', get_files(@_)), "\n";
+}
+
+sub list_files_unique
+{
+  my %d;
+  $d{$_} = 1 foreach (get_files(@_));
+  print join(' ', keys %d), "\n";
+}
+
+sub fetch_files
+{
+  my %entry = @_;
+  L4::ModList::fetch_remote_file($_->{command})
+    foreach (@{$entry{mods}});
 }
 
 sub dump_entry(@)
 {
   my %entry = @_;
-  print "modaddr=$entry{modaddr}\n";
+  print "modaddr=$entry{modaddr}\n" if defined $entry{modaddr};
   print "$entry{bootstrap}{command}\n";
   print "$entry{bootstrap}{cmdline}\n";
   print join("\n", map { $_->{cmdline} } @{$entry{mods}}), "\n";
@@ -224,6 +225,15 @@ if ($ARGV[0] eq 'build')
 elsif ($ARGV[0] eq 'list')
   {
     list_files(%entry);
+  }
+elsif ($ARGV[0] eq 'list_unique')
+  {
+    list_files_unique(%entry);
+  }
+elsif ($ARGV[0] eq 'fetch_files_and_list_unique')
+  {
+    fetch_files(%entry);
+    list_files_unique(%entry);
   }
 elsif ($ARGV[0] eq 'dump')
   {

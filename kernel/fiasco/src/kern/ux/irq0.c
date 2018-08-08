@@ -21,13 +21,14 @@ int main (void) {
   setitimer (ITIMER_REAL, &t, NULL);
 
   for (;;)
-    {  
+    {
       switch (sigwait (&blocked, &sig))
         {
           case 0:
             if (write (0, "T", 1) != -1)
               continue;
 
+            /* FALL-THRU */
           case -1:
             if (errno != EINTR)
               return 1;

@@ -418,6 +418,7 @@ base_tss_load(void)
 {
   /* Make sure the TSS isn't marked busy.  */
   base_gdt[BASE_TSS / 8].access &= ~ACC_TSS_BUSY;
+  asm volatile ("" : : : "memory");
   set_tr(BASE_TSS);
 }
 
@@ -435,21 +436,20 @@ base_cpu_setup(void)
   base_tss_load();
 }
 
-struct ptab64_mem_info_t ptab64_mem_info;
+struct boot32_info_t boot32_info;
 
 static void
 ptab_alloc(l4_uint32_t *out_ptab_pa)
 {
-  // this pool covers around 128GB physical memory
-  static char pool[150<<12] __attribute__((aligned(4096)));
+  static char pool[6 << 12] __attribute__((aligned(4096)));
   static l4_uint32_t pdirs;
   static int initialized;
 
   if (! initialized)
     {
       initialized = 1;
-      ptab64_mem_info.addr = (l4_uint32_t)pool;
-      ptab64_mem_info.size = sizeof(pool);
+      boot32_info.ptab64_addr = (l4_uint32_t)pool;
+      boot32_info.ptab64_size = sizeof(pool);
       memset(pool, 0, sizeof(pool));
       pdirs = ((l4_uint32_t)pool + PAGE_SIZE - 1) & ~PAGE_MASK;
     }
@@ -579,7 +579,7 @@ base_paging_init(l4_uint64_t phys_mem_max)
   paging_enable(base_pml4_pa);
 }
 
-void trap_dump_panic(const struct trap_state *st);
+void trap_dump_panic(const struct trap_state *st) L4_NORETURN;
 void trap_dump_panic(const struct trap_state *st)
 {
   int from_user = st->cs & 3;

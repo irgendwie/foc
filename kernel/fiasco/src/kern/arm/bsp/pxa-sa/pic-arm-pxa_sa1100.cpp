@@ -1,10 +1,12 @@
-INTERFACE [arm && pxa]: // -------------------------------------
+INTERFACE [arm && pf_xscale]: // -------------------------------------
 
+#include "initcalls.h"
 #include "kmem.h"
 
 EXTENSION class Pic
 {
 public:
+  typedef Mword Status;
   enum {
     ICIP = 0x000000,
     ICMR = 0x000004,
@@ -15,13 +17,15 @@ public:
   };
 };
 
-INTERFACE [arm && sa1100]: // ----------------------------------
+INTERFACE [arm && pf_sa1100]: // ----------------------------------
 
+#include "initcalls.h"
 #include "kmem.h"
 
 EXTENSION class Pic
 {
 public:
+  typedef Mword Status;
   enum {
     ICIP = 0x00000,
     ICMR = 0x00004,
@@ -33,10 +37,9 @@ public:
 };
 
 // -------------------------------------------------------------
-IMPLEMENTATION [arm && (sa1100 || pxa)]:
+IMPLEMENTATION [arm && (pf_xscale || pf_sa1100)]:
 
 #include "assert.h"
-#include "initcalls.h"
 #include "config.h"
 #include "irq_chip_generic.h"
 #include "irq_mgr.h"
@@ -109,18 +112,18 @@ Chip::restore_all(Mword s)
 
 static Static_object<Irq_mgr_single_chip<Chip> > mgr;
 
-IMPLEMENT FIASCO_INIT
+PUBLIC static FIASCO_INIT
 void Pic::init()
 {
   Irq_mgr::mgr = mgr.construct();
 }
 
 // for JDB only
-IMPLEMENT
+PUBLIC
 Pic::Status Pic::disable_all_save()
 { return mgr->c.disable_all_save(); }
 
-IMPLEMENT
+PUBLIC
 void
 Pic::restore_all(Status s)
 {
@@ -142,7 +145,7 @@ void irq_handler()
 }
 
 // -------------------------------------------------------------
-IMPLEMENTATION [arm && debug && (sa1100 || pxa)]:
+IMPLEMENTATION [arm && debug && (pf_sa1100 || pf_xscale)]:
 
 PUBLIC
 char const *

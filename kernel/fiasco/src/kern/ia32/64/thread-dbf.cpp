@@ -41,7 +41,7 @@ Thread::handle_double_fault (Trap_state *ts)
 	     "R12=%016lx  R13=%016lx\n"
 	     "R14=%016lx  R15=%016lx\n"
 	     "RIP %016lx  RFLAGS %016lx\n"
-	     "CS %04lx    SS %04lx          CPU=%d\n\n",
+	     "CS %04lx    SS %04lx          CPU=%u\n\n",
 	     ts->_ax, ts->_si,
 	     ts->_bx, ts->_di,
 	     ts->_cx, ts->_bp,
@@ -63,7 +63,7 @@ Thread::handle_double_fault (Trap_state *ts)
 
       if (c == 'k' || c == 'K')
 	{
-	     nested_trap_handler(ts,0); // XXX: 0 is possibly the wrong CPU
+	     nested_trap_handler(ts,Cpu_number(0)); // XXX: 0 is possibly the wrong CPU
 	}
     }
   else

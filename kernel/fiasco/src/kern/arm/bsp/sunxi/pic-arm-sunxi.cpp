@@ -1,14 +1,15 @@
-INTERFACE [arm && pic_gic && sunxi]:
+INTERFACE [arm && pic_gic && pf_sunxi]:
 
 #include "gic.h"
+#include "initcalls.h"
 
 // ------------------------------------------------------------------------
-IMPLEMENTATION [arm && pic_gic && sunxi]:
+IMPLEMENTATION [arm && pic_gic && pf_sunxi]:
 
 #include "irq_mgr_multi_chip.h"
 #include "kmem.h"
 
-IMPLEMENT FIASCO_INIT
+PUBLIC static FIASCO_INIT
 void
 Pic::init()
 {
@@ -23,16 +24,8 @@ Pic::init()
   Irq_mgr::mgr = m;
 }
 
-IMPLEMENT inline
-Pic::Status Pic::disable_all_save()
-{ return 0; }
-
-IMPLEMENT inline
-void Pic::restore_all(Status)
-{}
-
 // ------------------------------------------------------------------------
-IMPLEMENTATION [arm && pic_gic && mp && sunxi]:
+IMPLEMENTATION [arm && pic_gic && mp && pf_sunxi]:
 
 PUBLIC static
 void Pic::init_ap(Cpu_number, bool resume)

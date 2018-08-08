@@ -106,7 +106,7 @@ Kernel_uart::setup()
   if (!startup(p, i))
     printf("Comport/base 0x%04llx is not accepted by the uart driver!\n", p);
   else if (!change_mode(m, n))
-    panic("Somthing is wrong with the baud rate (%d)!\n", n);
+    panic("Something is wrong with the baud rate (%u)!\n", n);
 }
 
 IMPLEMENT
@@ -134,7 +134,7 @@ Kernel_uart::pm_on_resume(Cpu_number cpu)
   (void)cpu;
   assert (cpu == Cpu_number::boot_cpu());
   static_cast<Kernel_uart*>(Kernel_uart::uart())->setup();
-  uart()->state(Console::INENABLED | Console::OUTENABLED);
+  uart()->state(Console::ENABLED);
 
   if(Config::serial_esc != Config::SERIAL_ESC_NOIRQ)
     uart()->enable_rcv_irq();
@@ -150,7 +150,7 @@ public:
   {
     Kernel_uart::uart()->irq_ack();
     mask_and_ack();
-    ui->ack();
+    Upstream_irq::ack(ui);
     unmask();
     if (!Vkey::check_())
       kdb_ke("IRQ ENTRY");
@@ -163,7 +163,8 @@ void
 Kernel_uart::enable_rcv_irq()
 {
   static Kuart_irq uart_irq;
-  if (Irq_mgr::mgr->alloc(&uart_irq, uart()->irq()))
+  auto mgr = Irq_mgr::mgr;
+  if (mgr->alloc(&uart_irq, mgr->legacy_override(uart()->irq())))
     {
       uart_irq.unmask();
       uart()->enable_rcv_irq();

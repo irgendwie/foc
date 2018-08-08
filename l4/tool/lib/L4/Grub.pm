@@ -9,10 +9,15 @@ use Getopt::Long;
 sub parse_gengrub_args()
 {
   my %a = ( timeout => undef,
-            serial  => undef
+            serial  => undef,
+            grubpathprefix => undef,
+            grubentrytitle => undef,
 	   );
   my @opts = ("timeout=i", \$a{timeout},
-              "serial",    \$a{serial});
+              "serial",    \$a{serial},
+              "grubpathprefix:s", \$a{grubpathprefix},
+              "grubentrytitle:s", \$a{grubentrytitle},
+            );
 
   if (!GetOptions(@opts))
     {
@@ -22,8 +27,10 @@ sub parse_gengrub_args()
   if (0)
     {
       print "Options:\n";
-      print "timeout: $a{timeout}\n" if defined $a{timeout};
-      print "serial : $a{serial}\n" if defined $a{serial};
+      for (keys %a)
+        {
+          print "$_: $a{$_}\n" if defined $a{$_};
+        }
     }
 
   %a;
@@ -76,24 +83,55 @@ sub prepare_grub2_dir($)
   mkdir "$dir/boot/grub";
 }
 
+sub check_for_program
+{
+  my $prog;
+  for my $p (@_)
+    {
+      my $o = `sh -c "command -v \"$p\""`;
+      if ($? == 0)
+        {
+          chomp $o;
+          $prog = $o;
+          last;
+        }
+
+    }
+
+  die "\nDid not find ".join(' or ', map "'$_'", @_)
+      ." program, required to proceed. Please install.\n\n"
+    unless defined $prog;
+
+  $prog;
+}
+
 sub grub2_mkisofs($$@)
 {
   my ($isofilename, $dir, @morefiles) = @_;
-  # There are different versions of grub-mkrescue
-  # With Grub 2.00 it's a shell script, with 2.02 it's a binary, with it
-  # seems slightly different handling of mkisofs/xorriso options.
-  my $mkr = "grub-mkrescue";
-  my $fp = `sh -c "command -v $mkr"`;
-  die "Did not find '$mkr'" if $?;
+  my $mkr = check_for_program("grub2-mkrescue", "grub-mkrescue");
+  # grub-mkrescue returns without error if those are missing
+  check_for_program('xorriso');
+  check_for_program('mformat'); # EFI only?
+  check_for_program('mcopy');   # EFI only?
+
+  # Figure out grub-mkrescue variant as there are three different
+  # versions of grub-mkrescue, where one is incompatible.
+  # A pre-Grub-2.02 shell script, the incompatible binary-version
+  # (2.02~beta2*) and the fixed binary-version (2.02~beta3*) with restored
+  # behavior to the original shell script.
+  # The incompatible version is actually unreleased but has been, for
+  # example, shipped with Debian 8. It only works without the "-as mkisofs"
+  # argument parts. We use the following to detect this version and act
+  # accordingly.
   my $opt = '';
-  open(A, $fp) && do {
-    $opt = " -as mkisofs" if <A> =~ /^#! +\/.+sh/;
-    close A;
-  };
+  system("$mkr --output=/dev/null /dev/null -f >/dev/null 2>&1");
+  $opt = " -as mkisofs" unless $?;
   my $cmd = "$mkr --output=\"$isofilename\" $dir ".
             join(' ', @morefiles)." --$opt -f";
   system("$cmd");
   die "Failed to create ISO" if $?;
+  # grub-mkrescue does not propagate internal tool errors
+  die "Failed to create ISO" unless -e $isofilename;
 }
 
 

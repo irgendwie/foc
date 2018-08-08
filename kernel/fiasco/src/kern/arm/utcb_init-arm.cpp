@@ -1,4 +1,4 @@
-IMPLEMENTATION [arm && !armv6plus]:
+IMPLEMENTATION [arm && !arm_v6plus]:
 
 #include "mem_layout.h"
 #include "paging.h"
@@ -9,12 +9,12 @@ IMPLEMENT
 void
 Utcb_init::init()
 {
-  if (!Vmem_alloc::page_alloc ((void *)Mem_layout::Utcb_ptr_page,
-	Vmem_alloc::ZERO_FILL, Vmem_alloc::User))
-    panic ("UTCB pointer page allocation failure");
+  if (!Vmem_alloc::page_alloc((void *)Mem_layout::Utcb_ptr_page,
+                              Vmem_alloc::ZERO_FILL, Vmem_alloc::User))
+    panic("UTCB pointer page allocation failure");
 }
 
 //-----------------------------------------------------------------------------
-IMPLEMENTATION [arm && armv6plus]:
+IMPLEMENTATION [arm && arm_v6plus]:
 
 IMPLEMENT inline void Utcb_init::init() {}
