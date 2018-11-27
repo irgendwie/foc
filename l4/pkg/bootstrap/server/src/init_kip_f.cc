@@ -87,7 +87,9 @@ init_kip_f(void *_l4i, boot_info_t *bi, l4util_mb_info_t *mbi,
          l4i->root_eip, l4i->root_esp);
 
   /* Platform info */
+  /* TODO strncpy fails for PLATFORM_TYPE=beagleboard_x15 - everything <= 14 characters seem to work
   strncpy(l4i->platform_info.name, PLATFORM_TYPE,
           sizeof(l4i->platform_info.name));
+  */
   l4i->platform_info.name[sizeof(l4i->platform_info.name) - 1] = 0;
 }
