@@ -32,7 +32,7 @@ class Platform_arm_omap : public Platform_single_region_ram
     static L4::Io_register_block_mmio r(0x4806a000);
 #elif defined(PLATFORM_TYPE_omap3_am33xx)
     static L4::Io_register_block_mmio r(0x44e09000);
-#elif defined(PLATFORM_TYPE_pandaboard) || defined(PLATFORM_TYPE_omap5)
+#elif defined(PLATFORM_TYPE_pandaboard) || defined(PLATFORM_TYPE_omap5) || defined(PLATFORM_TYPE_beagleboard_x15)
     static L4::Io_register_block_mmio r(0x48020000);
 #else
 #error Unknown platform

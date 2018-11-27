@@ -41,4 +41,12 @@ config PF_OMAP5_5432EVM
         help
           Choose for OMAP5432EVM.
 
+config PF_OMAP5_BEAGLEBOARD_X15
+        bool "BeagleBoard-X15"
+        select CAN_ARM_CPU_CORTEX_A15
+        select HAS_CPU_VIRT
+        select DEFAULT_ARM_EM_NS if CPU_VIRT
+        help
+          Choose for BeagleBoard-X15
+
 endchoice

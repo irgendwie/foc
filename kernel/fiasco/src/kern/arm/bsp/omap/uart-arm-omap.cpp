@@ -10,7 +10,7 @@ IMPLEMENTATION [arm && pf_omap4_pandaboard]: // ---------------------------
 
 IMPLEMENT int Uart::irq() const { return 32 + 74; }
 
-IMPLEMENTATION [arm && pf_omap5]: // --------------------------------------
+IMPLEMENTATION [arm && (pf_omap5_5432evm || pf_omap5_beagleboard_x15)]: // 
 
 IMPLEMENT int Uart::irq() const { return 32 + 74; }
 
