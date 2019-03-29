@@ -2,3 +2,21 @@
 # PFDESCR: Allwinner (sunxi)
 # PFSELECT: CAN_ARM_CPU_CORTEX_A7
 # PFDEPENDS: ARM
+
+choice
+	prompt "Allwinner (sunxi)"
+	default PF_SUNXI_A83T
+
+config PF_SUNXI_A83T
+	bool "Allwinner A83T"
+	depends on PF_SUNXI
+	help
+		Choose for A83T.
+
+config PF_SUNXI_A20
+	bool "Allwinner A20"
+	depends on PF_SUNXI
+	help
+		Choose for A20.
+
+endchoice
