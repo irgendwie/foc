@@ -306,6 +306,12 @@ Vm_vmx_t<X>::load_guest_state(Cpu_number cpu, void *src)
 
       Vmx::vmwrite(Vmx::F_entry_int_info, irq_info);
     }
+  else
+    {
+      // switch off event injection if requested but still pending in hw
+      if (Vmx::vmread<Mword>(Vmx::F_entry_int_info) & (1UL << 31))
+        Vmx::vmwrite(Vmx::F_entry_int_info, irq_info);
+    }
 
   // hm, we have to check for sanitizing the cr0 and cr4 shadow stuff
   load(0x6000, 0x6006, src);
