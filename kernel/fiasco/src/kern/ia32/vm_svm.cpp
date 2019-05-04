@@ -486,8 +486,6 @@ Vm_svm::do_resume_vcpu(Context *ctxt, Vcpu_state *vcpu, Vmcb *vmcb_s)
   kernel_vmcb_s->control_area.intercept_instruction0 |= (1 << 22);
   // intercept HLT
   kernel_vmcb_s->control_area.intercept_instruction0 |= (1 << 24);
-  // intercept task switch
-  kernel_vmcb_s->control_area.intercept_instruction0 |= (1 << 29);
   // intercept shutdown
   kernel_vmcb_s->control_area.intercept_instruction0 |= (1 << 31);
   // intercept MONITOR/MWAIT
