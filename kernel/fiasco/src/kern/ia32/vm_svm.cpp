@@ -656,6 +656,7 @@ Vm_svm::do_resume_vcpu(Context *ctxt, Vcpu_state *vcpu, Vmcb *vmcb_s)
 
   if (EXPECT_TRUE(kernel_vmcb_s->np_enabled()))
     {
+      vmcb_s->state_save_area.cr0 = kernel_vmcb_s->state_save_area.cr0;
       vmcb_s->state_save_area.cr3 = kernel_vmcb_s->state_save_area.cr3;
       vmcb_s->state_save_area.cr4 = kernel_vmcb_s->state_save_area.cr4;
     }
