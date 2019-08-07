@@ -1,4 +1,16 @@
 # PF: SUNXI
 # PFDESCR: Allwinner (sunxi)
-# PFSELECT: CAN_ARM_CPU_CORTEX_A7
 # PFDEPENDS: ARM
+
+choice
+	prompt "SUNXI Platform"
+	depends on PF_SUNXI
+	default PF_SUNXI_BPIM3
+
+config PF_SUNXI_BPIM3
+	bool "BananaPi M3"
+	select CAN_ARM_CPU_CORTEX_A7
+	help
+	  Choose for BananaPi M3 platform.
+
+endchoice

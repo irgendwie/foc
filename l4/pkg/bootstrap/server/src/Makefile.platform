@@ -34,6 +34,7 @@ SUPPORT_CC_arm-zedboard        := platform/zynq.cc
 SUPPORT_CC_arm-parallella      := platform/zynq.cc
 SUPPORT_CC_arm-zynqmp          := platform/zynq.cc
 SUPPORT_CC_arm-cubieboard2     := platform/sunxi.cc
+SUPPORT_CC_arm-bpi_m3          := platform/sunxi.cc
 SUPPORT_CC_arm-armada38x       := platform/armada38x.cc
 SUPPORT_CC_arm-rcar3_m3        := platform/rcar3.cc
 DEFAULT_RELOC_arm-rcar3_m3     := 0x09000000
