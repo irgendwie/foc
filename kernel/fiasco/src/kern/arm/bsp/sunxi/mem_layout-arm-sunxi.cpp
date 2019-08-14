@@ -12,3 +12,21 @@ public:
     Timer_phys_base      = 0x01c20c00,
   };
 };
+
+//-----------------------------
+INTERFACE [arm && pf_sunxi && pf_sunxi_bpim3]:
+
+EXTENSION class Mem_layout
+{
+public:
+  enum Phys_layout_a83t : Address {
+    /* CPUCFG internally, CPUXCFG under Linux */
+    Cpu_cfg_phys_base    = 0x01700000,
+    /* CoreLink cache-coherent interconnect (cci) control */
+    Cci_400_phys_base    = 0x01790000,
+    /* Cpu power/reset/clock management? Just a guess at the acronym. */
+    R_prcm_phys_base     = 0x01f01400,
+    /* Not documented in the Manual, just looking at the kernel fork here. */
+    R_cpu_cfg_phys_base  = 0x01f01c00,
+  };
+};

@@ -19,4 +19,5 @@ timer_tick_IMPL       += timer_tick-single-vector
 kernel_uart_IMPL      += kernel_uart-libuart
 reset_IMPL            += reset-arm-sunxi
 clock_IMPL            += clock-generic
+
 platform_control_IMPL += platform_control-arm-sunxi
