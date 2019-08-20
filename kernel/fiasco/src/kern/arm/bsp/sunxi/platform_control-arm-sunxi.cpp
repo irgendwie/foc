@@ -8,6 +8,7 @@ INTERFACE [arm && mp && pf_sunxi && pf_sunxi_bpim3]:
 #include "io.h"
 #include "mem_layout.h"
 #include "mmio_register_block.h"
+#include "cci-400.h"
 
 EXTENSION class Platform_control {
 public:
