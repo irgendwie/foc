@@ -12,9 +12,27 @@ INTERFACE [arm && mp && pf_sunxi && pf_sunxi_bpim3]:
 
 EXTENSION class Platform_control {
 public:
-  class Pmu : public Mmio_register_block
+  class Pmu
   {
+  public:
+    explicit Pmu(Address virt_cpu_cfg, Address virt_rcpu)
+      : _cpu_cfg(virt_cpu_cfg),
+	_rcpu_cfg(virt_rcpu)
+    { }
+
+  private:
+    void cluster_power(int, bool) const;
+    void cpu_power(int, bool) const;
+    void set_secondary_entry(Address phys) const;
+
+    Mmio_register_block _cpu_cfg;
+    Mmio_register_block _rcpu_cfg;
+
+    friend class Platform_control;
   };
+
+  static Static_object<Pmu> pmu;
+  static Static_object<Cci> cci;
 };
 
 //------------------------------------------------Generic control
@@ -55,6 +73,22 @@ IMPLEMENTATION [arm && mp && pf_sunxi && pf_sunxi_bpim3]:
 #include "mmio_register_block.h"
 #include "kmem.h"
 
+Static_object<Platform_control::Pmu> Platform_control::pmu;
+Static_object<Cci> Platform_control::cci;
+
+// Boot all multi-processor clusters and cpus.
+// The sequence is as follows:
+//
+// 1. Initialize the cci ports
+// 2. Start cpus in sequence
+// 2.1. (?) Enable cluster power if first cpu on cluster.
+// 2.2. Power on the cpu
+// 2.3. Reset the cpu to seconary entry address.
+// 2.4. Wait for it to come online.
+//
+// Note that 2. would sometimes be done my the psci in full but the bootloader
+// does not seem to support it. Some bits of the `mpidr` would then be reserved
+// for the cluster address, usually (?) the second-least significant byte.
 PUBLIC static
 void
 Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
@@ -100,12 +134,55 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
     C1_CPU3_PWR_SWITCH_CTRL  = 0x15c,
   };
 
-  Mmio_register_block cpucfg(Kmem::mmio_remap(Mem_layout::Cpu_cfg_phys_base));
-  Mmio_register_block r_prcm(Kmem::mmio_remap(Mem_layout::R_cpu_cfg_phys_base));
+  printf("BPI M3: boot_ap_cpus");
+
+  Address cpucfg_addr = Kmem::mmio_remap(Mem_layout::Cpu_cfg_phys_base);
+  Address r_cpucfg_addr = Kmem::mmio_remap(Mem_layout::R_cpu_cfg_phys_base);
+  Address cci_addr = Kmem::mmio_remap(Mem_layout::Cci_400_phys_base);
+
+  pmu.construct(cpucfg_addr, r_cpucfg_addr);
+  cci.construct(cci_addr);
+
+  printf("BPI M3: starting cci ports");
+
+  for(int i = 0; i < 2; i++) {
+    cci_init(i);
+  }
 
   printf("BPI M3: booting up other cores");
 
   Ipi::bcast(Ipi::Global_request, Cpu_number::boot_cpu());
+
+  const int phys_ids [8] = {
+    0x000, 0x001, 0x002, 0x003,
+    0x100, 0x101, 0x102, 0x103,
+  };
+
+  for(int i = 0; i < 8; i++) {
+    cpuboot(Cpu_phys_id(phys_ids[i]), phys_tramp_mp_addr);
+
+    Ipi::send(Ipi::Global_request, Cpu_number::boot_cpu(), Cpu_number(i));
+  }
+
+  printf("BPI M3: cores running");
+}
+
+// Has an interface as if pcsi. But neither boot loader (stage0, uboot)
+// supports that call for all cpus and clusters currently (2019).
+PRIVATE static
+int
+Platform_control::cpuboot(Cpu_phys_id target, Address phys_tramp_mp_addr)
+{
+  pmu->set_secondary_entry(phys_tramp_mp_addr);
+  return 0;
+}
+
+PRIVATE static
+int
+Platform_control::cci_init(int cluster)
+{
+  // cci->enable_slave_port(3);
+  // cci->enable_slave_port(4);
 }
 
 /*

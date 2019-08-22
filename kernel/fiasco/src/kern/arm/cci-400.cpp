@@ -12,6 +12,9 @@ INTERFACE [arm]:
 class Cci : public Mmio_register_block
 {
 public:
+  explicit Cci(Address base) : Mmio_register_block(base)
+    { }
+
   enum
   {
     // Offset of registers from the base location.
@@ -58,3 +61,13 @@ public:
     SUPPORTS_SNOOP_MASK = (0x1 << 30),
   };
 };
+
+IMPLEMENTATION [arm]:
+
+// Enable cache control on a slave/processor port.
+PUBLIC
+void
+Cci::enable_slave_port(int port) {
+  // FIXME: not yet implemented.
+  return;
+}
