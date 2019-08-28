@@ -68,6 +68,34 @@ IMPLEMENTATION [arm]:
 PUBLIC
 void
 Cci::enable_slave_port(int port) {
-  // FIXME: not yet implemented.
-  return;
+  Address base;
+  if(!slave_port_base(port, base)) {
+    return;
+  }
+
+  r<Mword>(base + CONTOL_REG)
+    .set(ENABLE_SNOOP_MASK | ENABLE_DVI_MASK);
+  wait_for_completion();
+}
+
+PRIVATE
+bool
+Cci::slave_port_base(int port, Address& out) {
+  switch(port) {
+  case 3:
+    out = SLAVE_3_Base;
+    return true;
+  case 4:
+    out = SLAVE_4_Base;
+    return true;
+  }
+
+  return false;
+}
+
+PRIVATE
+void
+Cci::wait_for_completion() {
+  while(r<Mword>(STATUS_REG).read() & 0x1)
+    ;
 }
