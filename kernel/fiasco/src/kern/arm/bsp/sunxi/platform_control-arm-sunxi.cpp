@@ -23,12 +23,53 @@ public:
   private:
     void cluster_power(int, bool) const;
     void cpu_power(int, bool) const;
-    void set_secondary_entry(Address phys) const;
+    void set_secondary_entry(Address) const;
 
     Mmio_register_block _cpu_cfg;
     Mmio_register_block _rcpu_cfg;
 
     friend class Platform_control;
+  };
+
+  // System Control registers
+  enum {
+    CPUx_base       = 0x40,
+    CPUx_offset     = 0x40,
+    C0CTRL_REG0     = 0x00,
+    C0CTRL_REG1     = 0x04,
+    C1CTRL_REG0     = 0x10,
+    C1CTRL_REG1     = 0x14,
+    GENER_CTRL_REG0 = 0x28,
+    GENER_CTRL_REG1 = 0x2c,
+    C0_CPU_STATUS   = 0x30,
+    C1_CPU_STATUS   = 0x34,
+    IRQ_FIQ_STATUS  = 0x3c,
+    IRQ_FIQ_MASK    = 0x40,
+    C0_RST_CTRL     = 0x80,
+    C1_RST_CTRL     = 0x84,
+    CPUx_RST_CTRL   = 0,
+    GENER_CTRL_REG  = 0x184,
+    PRIVATE_REG0    = 0x1a4,
+    PRIVATE_REG1    = 0x1a8,
+    BOOT_HOTPLUG_REG = 0x1ac,
+  };
+
+  // Power control management registers
+  enum {
+    CPUS_CLK_REG             = 0x00,
+    CPUx_PWROFF_GATING_base  = 0x100,
+    C0CPUX_PWROFF_GATING_REG = 0x100,
+    C1CPUX_PWROFF_GATING_REG = 0x104,
+    GPU_PWROFF_GATING_REG    = 0x118,
+    CPU_PWR_base             = 0x140,
+    C0_CPU0_PWR_SWITCH_CTRL  = 0x140,
+    C0_CPU1_PWR_SWITCH_CTRL  = 0x144,
+    C0_CPU2_PWR_SWITCH_CTRL  = 0x148,
+    C0_CPU3_PWR_SWITCH_CTRL  = 0x14c,
+    C1_CPU0_PWR_SWITCH_CTRL  = 0x150,
+    C1_CPU1_PWR_SWITCH_CTRL  = 0x154,
+    C1_CPU2_PWR_SWITCH_CTRL  = 0x158,
+    C1_CPU3_PWR_SWITCH_CTRL  = 0x15c,
   };
 
   static Static_object<Pmu> pmu;
@@ -93,46 +134,6 @@ PUBLIC static
 void
 Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
 {
-  // System Control registers
-  enum {
-    CPUx_base       = 0x40,
-    CPUx_offset     = 0x40,
-    C0CTRL_REG0     = 0x00,
-    C0CTRL_REG1     = 0x04,
-    C1CTRL_REG0     = 0x10,
-    C1CTRL_REG1     = 0x14,
-    GENER_CTRL_REG0 = 0x28,
-    GENER_CTRL_REG1 = 0x2c,
-    C0_CPU_STATUS   = 0x30,
-    C1_CPU_STATUS   = 0x34,
-    IRQ_FIQ_STATUS  = 0x3c,
-    IRQ_FIQ_MASK    = 0x40,
-    C0_RST_CTRL     = 0x80,
-    C1_RST_CTRL     = 0x84,
-    CPUx_RST_CTRL   = 0,
-    GENER_CTRL_REG  = 0x184,
-    PRIVATE_REG0    = 0x1a4,
-    PRIVATE_REG1    = 0x1a8,
-    BOOT_HOTPLUG_REG = 0x1ac,
-  };
-
-  // Power control management registers
-  enum {
-    CPUS_CLK_REG             = 0x00,
-    CPUx_PWROFF_GATING_base  = 0x100,
-    C0CPUX_PWROFF_GATING_REG = 0x100,
-    C1CPUX_PWROFF_GATING_REG = 0x104,
-    GPU_PWROFF_GATING_REG    = 0x118,
-    CPU_PWR_base             = 0x140,
-    C0_CPU0_PWR_SWITCH_CTRL  = 0x140,
-    C0_CPU1_PWR_SWITCH_CTRL  = 0x144,
-    C0_CPU2_PWR_SWITCH_CTRL  = 0x148,
-    C0_CPU3_PWR_SWITCH_CTRL  = 0x14c,
-    C1_CPU0_PWR_SWITCH_CTRL  = 0x150,
-    C1_CPU1_PWR_SWITCH_CTRL  = 0x154,
-    C1_CPU2_PWR_SWITCH_CTRL  = 0x158,
-    C1_CPU3_PWR_SWITCH_CTRL  = 0x15c,
-  };
 
   printf("BPI M3: boot_ap_cpus");
 
@@ -185,9 +186,10 @@ Platform_control::cci_init(int cluster)
   // cci->enable_slave_port(4);
 }
 
-/*
-static inline void sunxi_set_secondary_entry(void *entry)
-{
-	sunxi_smc_writel((u32)entry, (void *)(SUNXI_R_CPUCFG_VBASE + PRIVATE_REG0));
+IMPLEMENT static
+void
+Platform_control::Pmu::set_secondary_entry(Address entry_addr) const {
+  _rcpu_cfg
+    .r<Mword>(Platform_control::PRIVATE_REG0)
+    .write(entry_addr);
 }
-*/
