@@ -44,21 +44,21 @@ public:
   };
 
   // Register masks for 32-bit STATUS_REG.
-  enum Status_Val {
+  enum Status_Val : Mword {
     // Whether changes to snoop or DVM are pending, e.g. power down needs to
     // hold while pending.
     PENDING_MASK = 0x1,
   };
 
   // Values for 32-bit SNOOP_REG.
-  enum Slave_Control_Val {
+  enum Slave_Control_Val : Mword {
     // Issue snoop requests.
     ENABLE_SNOOP_MASK   = 0x1,
     // Distributed Virtual Memory (DVM), required for MMU support.
     ENABLE_DVI_MASK     = 0x2,
     // Read masks for support flags.
-    SUPPORTS_DVM_MASK   = (0x1 << 31),
-    SUPPORTS_SNOOP_MASK = (0x1 << 30),
+    SUPPORTS_DVM_MASK   = (Mword(0x1) << 31),
+    SUPPORTS_SNOOP_MASK = (Mword(0x1) << 30),
   };
 };
 

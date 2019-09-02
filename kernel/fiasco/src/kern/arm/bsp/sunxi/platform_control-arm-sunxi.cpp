@@ -21,8 +21,8 @@ public:
     { }
 
   private:
-    void cluster_power(int, bool) const;
-    void cpu_power(int, bool) const;
+    void cluster_on(int cluster) const;
+    void cpu_on(int cluster, int cpu) const;
     void set_secondary_entry(Address) const;
 
     Mmio_register_block _cpu_cfg;
@@ -35,16 +35,20 @@ public:
   enum {
     CPUx_base       = 0x40,
     CPUx_offset     = 0x40,
+    CTRL_REG0_base  = 0x00,
+    CTRL_REG1_base  = 0x04,
     C0CTRL_REG0     = 0x00,
     C0CTRL_REG1     = 0x04,
     C1CTRL_REG0     = 0x10,
     C1CTRL_REG1     = 0x14,
     GENER_CTRL_REG0 = 0x28,
     GENER_CTRL_REG1 = 0x2c,
+    CPU_STATUS_base = 0x30,
     C0_CPU_STATUS   = 0x30,
     C1_CPU_STATUS   = 0x34,
     IRQ_FIQ_STATUS  = 0x3c,
     IRQ_FIQ_MASK    = 0x40,
+    RST_CTRL_base   = 0x80,
     C0_RST_CTRL     = 0x80,
     C1_RST_CTRL     = 0x84,
     CPUx_RST_CTRL   = 0,
@@ -70,6 +74,17 @@ public:
     C1_CPU1_PWR_SWITCH_CTRL  = 0x154,
     C1_CPU2_PWR_SWITCH_CTRL  = 0x158,
     C1_CPU3_PWR_SWITCH_CTRL  = 0x15c,
+  };
+
+  // Bit flags for parts of the RST_CTRL registers.
+  // Exact function of each flag is not known exactly.
+  enum Cpu_Rst_Ctrl_Val : Mword {
+    SOC_DBG_RESET_MASK = 0x1 << 24,
+    // A part of the debugging components.
+    ETM_RESET_MASK     = 0xF << 20,
+    DEBUG_RESET_MASK   = 0xF << 16,
+    HRESET_MASK        = 0x1 << 12,
+    L2CACHE_RESET_MASK = 0x1 <<  8,
   };
 
   static Static_object<Pmu> pmu;
@@ -159,9 +174,10 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
     0x100, 0x101, 0x102, 0x103,
   };
 
-  for(int i = 0; i < 8; i++) {
+  /* Start all other cores, assuming this is cluster0-core0 */
+  pmu->cluster_on(1);
+  for(int i = 1; i < 8; i++) {
     cpuboot(Cpu_phys_id(phys_ids[i]), phys_tramp_mp_addr);
-
     Ipi::send(Ipi::Global_request, Cpu_number::boot_cpu(), Cpu_number(i));
   }
 
@@ -175,6 +191,7 @@ int
 Platform_control::cpuboot(Cpu_phys_id target, Address phys_tramp_mp_addr)
 {
   pmu->set_secondary_entry(phys_tramp_mp_addr);
+
   return 0;
 }
 
@@ -186,10 +203,56 @@ Platform_control::cci_init(int cluster)
   // cci->enable_slave_port(4);
 }
 
-IMPLEMENT static
+IMPLEMENT
 void
 Platform_control::Pmu::set_secondary_entry(Address entry_addr) const {
   _rcpu_cfg
     .r<Mword>(Platform_control::PRIVATE_REG0)
     .write(entry_addr);
+}
+
+IMPLEMENT
+void
+Platform_control::Pmu::cluster_on(int idx) const {
+  // We only have two clusters.
+  idx = idx & 1;
+  // The following is initialization code based on the Allwinner Linux kernel
+  // TODO: the Linux code has some waits. Evaluate which are needed and why?
+
+  // Grab the registers for the cluster we want to control.
+  auto rst_ctrl = _cpu_cfg.r<Mword>(Platform_control::RST_CTRL_base + 0x4*idx);
+  auto pwron_reset = _cpu_cfg.r<Mword>(Platform_control::CPU_STATUS_base + 0x4*idx);
+  auto ctrl_reg0 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG0_base + 0x10*idx);
+  auto ctrl_reg1 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG1_base + 0x10*idx);
+  auto pwroff_gating = _rcpu_cfg.r<Mword>(Platform_control::CPUx_PWROFF_GATING_base + 0x4*idx);
+
+  // Assert reset for all cores.
+  rst_ctrl.clear(0xF);
+  // Assert power-on reset for all cores.
+  pwron_reset.clear(0xF);
+
+  // Assert resets for connected components. Includes the L2 cache while the
+  // cores will do their own L1 caches on startup.
+  Mword CLUSTER_CORE_RESETS =
+    Platform_control::SOC_DBG_RESET_MASK
+    | Platform_control::ETM_RESET_MASK
+    | Platform_control::DEBUG_RESET_MASK
+    | Platform_control::HRESET_MASK
+    | Platform_control::L2CACHE_RESET_MASK;
+  rst_ctrl.clear(CLUSTER_CORE_RESETS);
+
+  // Set L2 reset disable to low.
+  ctrl_reg0.clear(0x1 << 4);
+
+  // active ACINACTM, Part of the reset of the ACE interface
+  ctrl_reg1.set(0x1);
+  // Clear pwroff gating
+  pwroff_gating.clear((0x1 << 4) | 0x1);
+  // de-activate ACINACTM,
+  ctrl_reg1.clear(0x1);
+
+  // Finally de-assert all resets we asserted earlier.
+  rst_ctrl.set(CLUSTER_CORE_RESETS);
+
+  // Core resets and power-on resets stay on!
 }
