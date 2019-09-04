@@ -15,17 +15,20 @@ public:
   class Pmu
   {
   public:
-    explicit Pmu(Address virt_cpu_cfg, Address virt_rcpu)
+    explicit Pmu(Address virt_cpu_cfg, Address virt_prcm, Address virt_rcpu)
       : _cpu_cfg(virt_cpu_cfg),
-	_rcpu_cfg(virt_rcpu)
+        _prcm_cfg(virt_prcm),
+	      _rcpu_cfg(virt_rcpu)
     { }
 
   private:
     void cluster_on(int cluster) const;
     void cpu_on(int cluster, int cpu) const;
+    void power_switch_on(int cluster, int cpu) const;
     void set_secondary_entry(Address) const;
 
     Mmio_register_block _cpu_cfg;
+    Mmio_register_block _prcm_cfg;
     Mmio_register_block _rcpu_cfg;
 
     friend class Platform_control;
@@ -150,24 +153,26 @@ void
 Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
 {
 
-  printf("BPI M3: boot_ap_cpus");
+  printf("BPI M3: boot_ap_cpus\n");
 
   Address cpucfg_addr = Kmem::mmio_remap(Mem_layout::Cpu_cfg_phys_base);
+  Address prcm_addr = Kmem::mmio_remap(Mem_layout::R_prcm_phys_base);
   Address r_cpucfg_addr = Kmem::mmio_remap(Mem_layout::R_cpu_cfg_phys_base);
   Address cci_addr = Kmem::mmio_remap(Mem_layout::Cci_400_phys_base);
 
-  pmu.construct(cpucfg_addr, r_cpucfg_addr);
+  pmu.construct(cpucfg_addr, prcm_addr, r_cpucfg_addr);
   cci.construct(cci_addr);
 
-  printf("BPI M3: starting cci ports");
+  printf("BPI M3: powering secondary cluster\n");
+  pmu->cluster_on(1);
 
+  printf("BPI M3: starting cci ports\n");
   for(int i = 0; i < 2; i++) {
-    cci_init(i);
+    // cci_init(i);
   }
 
-  printf("BPI M3: booting up other cores");
-
-  Ipi::bcast(Ipi::Global_request, Cpu_number::boot_cpu());
+  printf("BPI M3: booting up other cores\n");
+  // Ipi::bcast(Ipi::Global_request, Cpu_number::boot_cpu());
 
   const int phys_ids [8] = {
     0x000, 0x001, 0x002, 0x003,
@@ -175,13 +180,23 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   };
 
   /* Start all other cores, assuming this is cluster0-core0 */
-  pmu->cluster_on(1);
-  for(int i = 1; i < 8; i++) {
+  for(int i = 1; i < 4; i++) {
+    printf(" enabling %i (mpidr %i)\n", i, phys_ids[i]);
     cpuboot(Cpu_phys_id(phys_ids[i]), phys_tramp_mp_addr);
     Ipi::send(Ipi::Global_request, Cpu_number::boot_cpu(), Cpu_number(i));
   }
 
-  printf("BPI M3: cores running");
+  printf("BPI M3: cores running\n");
+}
+
+IMPLEMENT_OVERRIDE static
+void
+Platform_control::init(Cpu_number cpu_id)
+{
+  Cpu& cpu = Cpu::cpus.cpu(cpu_id);
+  printf("BPI M3: cpu ready %i(%i)\n",
+    cxx::int_value<Cpu_number>(cpu_id),
+    cxx::int_value<Cpu_phys_id>(cpu.phys_id()));
 }
 
 // Has an interface as if pcsi. But neither boot loader (stage0, uboot)
@@ -190,8 +205,9 @@ PRIVATE static
 int
 Platform_control::cpuboot(Cpu_phys_id target, Address phys_tramp_mp_addr)
 {
+  auto id = cxx::int_value<Cpu_phys_id>(target);
   pmu->set_secondary_entry(phys_tramp_mp_addr);
-
+  pmu->cpu_on((id >> 8) & 2, id & 0x3);
   return 0;
 }
 
@@ -199,7 +215,9 @@ PRIVATE static
 int
 Platform_control::cci_init(int cluster)
 {
-  // cci->enable_slave_port(3);
+  printf(" enabling slave port 3\n");
+  cci->enable_slave_port(3);
+  // printf(" enabling slave port 4\n");
   // cci->enable_slave_port(4);
 }
 
@@ -221,7 +239,7 @@ Platform_control::Pmu::cluster_on(int idx) const {
 
   // Grab the registers for the cluster we want to control.
   auto rst_ctrl = _cpu_cfg.r<Mword>(Platform_control::RST_CTRL_base + 0x4*idx);
-  auto pwron_reset = _cpu_cfg.r<Mword>(Platform_control::CPU_STATUS_base + 0x4*idx);
+  auto pwron_reset = _rcpu_cfg.r<Mword>(Platform_control::CPU_STATUS_base + 0x4*idx);
   auto ctrl_reg0 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG0_base + 0x10*idx);
   auto ctrl_reg1 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG1_base + 0x10*idx);
   auto pwroff_gating = _rcpu_cfg.r<Mword>(Platform_control::CPUx_PWROFF_GATING_base + 0x4*idx);
@@ -255,4 +273,85 @@ Platform_control::Pmu::cluster_on(int idx) const {
   rst_ctrl.set(CLUSTER_CORE_RESETS);
 
   // Core resets and power-on resets stay on!
+}
+
+IMPLEMENT
+void
+Platform_control::Pmu::cpu_on(int cluster, int cpu) const {
+  // Ignore cluster for now.
+  cluster &= 0;
+  cpu &= 3;
+
+  auto rst_ctrl = _cpu_cfg.r<Mword>(Platform_control::RST_CTRL_base + 0x4*cluster);
+  auto pwron_reset = _rcpu_cfg.r<Mword>(Platform_control::CPU_STATUS_base + 0x4*cluster);
+  auto ctrl_reg0 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG0_base + 0x10*cluster);
+  auto pwroff_gating = _rcpu_cfg.r<Mword>(Platform_control::CPUx_PWROFF_GATING_base + 0x4*cluster);
+
+  // Assert core reset control of core.
+  rst_ctrl.clear(1 << cpu);
+  // Assert power-on reset of core.
+  pwron_reset.clear(1 << cpu);
+
+  // Set L1RSTDISABLE of core to low.
+  ctrl_reg0.clear(1 << cpu);
+
+  // Release power switch.
+  power_switch_on(cluster, cpu);
+
+  // Clear poweroff gating
+  pwroff_gating.clear(1 << cpu);
+
+  // De-assert power-on reset.
+  pwron_reset.set(1 << cpu);
+  // De-assert core reset control.
+  rst_ctrl.set(1 << cpu);
+}
+
+IMPLEMENT
+void
+Platform_control::Pmu::power_switch_on(int cluster, int cpu) const {
+  auto pwr_clamp = _prcm_cfg.r<Mword>(Platform_control::CPU_PWR_base + 0x10*cluster + 0x4*cpu);
+  // TODO: this is a copy from Linux. Has several magic values and it is
+  // unclear what exactly they do. Seem to gradually enable something (note
+  // that bits get cleared from the right, one or multiple at a time). The
+  // documentation only specifies
+  // * 0x00 – Power On
+  // * 0xFF – Power Off
+  // But it does not give a sequence for this.
+
+  if(pwr_clamp.read() == 0x00) {
+    printf("Power-switch for cluster:%i cpu:%i already enabled\n", cluster, cpu);
+    return;
+  }
+
+  pwr_clamp.write(0xFE);
+  Platform_control::udelay(20);
+
+  pwr_clamp.write(0xF8);
+  Platform_control::udelay(10);
+
+  pwr_clamp.write(0xE0);
+  Platform_control::udelay(10);
+
+  /// TODO: this write appears only for SUN8IW6, but WHY?
+  pwr_clamp.write(0xc0);
+  Platform_control::udelay(10);
+
+  pwr_clamp.write(0x80);
+  Platform_control::udelay(10);
+
+  pwr_clamp.write(0x00);
+  Platform_control::udelay(20);
+
+  while(pwr_clamp.read() != 0x00)
+    ;
+}
+
+PRIVATE static
+void
+Platform_control::udelay(int us)
+{
+  // Running at ~1GHz
+  for (int delay = 1000*us; delay; --delay)
+    Mem::barrier();
 }
