@@ -8,6 +8,7 @@ INTERFACES_KERNEL       += $(if $(CONFIG_PF_SUNXI_BPIM3),cci-400,)
 
 RAM_PHYS_BASE           := 0x40000000
 MPCORE_PHYS_BASE        := 0x01c80000
+TRAMP_MP_ASM_INCLUDE    := $(BSP_SRC_DIR)/tramp-mp-asm.h
 OBJECTS_LIBUART         += uart_16550.o uart_16550_dw.o
 
 SUBSYSTEMS              += LIBUART
@@ -24,6 +25,4 @@ reset_IMPL            += reset-arm-sunxi
 clock_IMPL            += clock-generic
 
 # cci for multi-cluster
-# PREPROCESS_PARTS-$(CONFIG_PF_SUNXI_BPIM3) += cci-400
-
 platform_control_IMPL += platform_control-arm-sunxi

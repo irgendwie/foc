@@ -92,6 +92,9 @@ public:
 
   static Static_object<Pmu> pmu;
   static Static_object<Cci> cci;
+
+  static Mword _soc_revision;
+  static Mword _soc_chipid[4];
 };
 
 //------------------------------------------------Generic control
@@ -135,6 +138,9 @@ IMPLEMENTATION [arm && mp && pf_sunxi && pf_sunxi_bpim3]:
 Static_object<Platform_control::Pmu> Platform_control::pmu;
 Static_object<Cci> Platform_control::cci;
 
+Mword Platform_control::_soc_revision;
+Mword Platform_control::_soc_chipid [4];
+
 // Boot all multi-processor clusters and cpus.
 // The sequence is as follows:
 //
@@ -159,7 +165,6 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   Address prcm_addr = Kmem::mmio_remap(Mem_layout::R_prcm_phys_base);
   Address r_cpucfg_addr = Kmem::mmio_remap(Mem_layout::R_cpu_cfg_phys_base);
   Address cci_addr = Kmem::mmio_remap(Mem_layout::Cci_400_phys_base);
-  Address ccu_addr = Kmem::mmio_remap(Mem_layout::Ccu_phys_base);
 
   Kmem::mmio_remap(Mem_layout::Cci_400_phys_base + Cci::SLAVE_3_Base);
   Kmem::mmio_remap(Mem_layout::Cci_400_phys_base + Cci::SLAVE_4_Base);
@@ -167,9 +172,8 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   pmu.construct(cpucfg_addr, prcm_addr, r_cpucfg_addr);
   cci.construct(cci_addr);
 
-  Mmio_register_block ccu = Mmio_register_block(ccu_addr);
-
-  printf("BPI: AXI clock configuration %lx", ccu.r<Mword>(0x50).read());
+  soc_version_init();
+  debug_soc_state();
 
   printf("BPI M3: powering secondary cluster\n");
   pmu->cluster_on(1);
@@ -189,10 +193,11 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   for(int i = 1; i < 8; i++) {
     printf(" enabling %i (mpidr %i)\n", i, phys_ids[i]);
     cpuboot(Cpu_phys_id(phys_ids[i]), phys_tramp_mp_addr);
-    // Ipi::send(Ipi::Global_request, Cpu_number::boot_cpu(), Cpu_number(i));
+    Ipi::send(Ipi::Global_request, Cpu_number::boot_cpu(), Cpu_number(i));
   }
 
   printf("BPI M3: cores running\n");
+  debug_soc_state();
 }
 
 IMPLEMENT_OVERRIDE static
@@ -248,12 +253,15 @@ Platform_control::Pmu::cluster_on(int idx) const {
   auto pwron_reset = _rcpu_cfg.r<Mword>(Platform_control::CPU_STATUS_base + 0x4*idx);
   auto ctrl_reg0 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG0_base + 0x10*idx);
   auto ctrl_reg1 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG1_base + 0x10*idx);
-  auto pwroff_gating = _rcpu_cfg.r<Mword>(Platform_control::CPUx_PWROFF_GATING_base + 0x4*idx);
+  auto pwroff_gating = _prcm_cfg.r<Mword>(Platform_control::CPUx_PWROFF_GATING_base + 0x4*idx);
 
   // Assert reset for all cores.
   rst_ctrl.clear(0xF);
+  Platform_control::udelay(10);
+
   // Assert power-on reset for all cores.
   pwron_reset.clear(0xF);
+  Platform_control::udelay(10);
 
   // Assert resets for connected components. Includes the L2 cache while the
   // cores will do their own L1 caches on startup.
@@ -264,6 +272,7 @@ Platform_control::Pmu::cluster_on(int idx) const {
     | Platform_control::HRESET_MASK
     | Platform_control::L2CACHE_RESET_MASK;
   rst_ctrl.clear(CLUSTER_CORE_RESETS);
+  Platform_control::udelay(10);
 
   // Set L2 reset disable to low.
   ctrl_reg0.clear(0x1 << 4);
@@ -271,13 +280,15 @@ Platform_control::Pmu::cluster_on(int idx) const {
   // active ACINACTM, Part of the reset of the ACE interface
   ctrl_reg1.set(0x1);
   // Clear pwroff gating
-  pwroff_gating.clear((0x1 << 4) | 0x1);
+  pwroff_gating.clear(0x1);
+  Platform_control::udelay(20);
+
   // de-activate ACINACTM,
   ctrl_reg1.clear(0x1);
 
   // Finally de-assert all resets we asserted earlier.
   rst_ctrl.set(CLUSTER_CORE_RESETS);
-
+  Platform_control::udelay(20);
   // Core resets and power-on resets stay on!
 }
 
@@ -292,12 +303,15 @@ Platform_control::Pmu::cpu_on(int cluster, int cpu) const {
   auto rst_ctrl = _cpu_cfg.r<Mword>(Platform_control::RST_CTRL_base + 0x4*cluster);
   auto pwron_reset = _rcpu_cfg.r<Mword>(Platform_control::CPU_STATUS_base + 0x4*cluster);
   auto ctrl_reg0 = _cpu_cfg.r<Mword>(Platform_control::CTRL_REG0_base + 0x10*cluster);
-  auto pwroff_gating = _rcpu_cfg.r<Mword>(Platform_control::CPUx_PWROFF_GATING_base + 0x4*cluster);
+  auto pwroff_gating = _prcm_cfg.r<Mword>(Platform_control::CPUx_PWROFF_GATING_base + 0x4*cluster);
 
   // Assert core reset control of core.
   rst_ctrl.clear(1 << cpu);
+  Platform_control::udelay(10);
+
   // Assert power-on reset of core.
   pwron_reset.clear(1 << cpu);
+  Platform_control::udelay(10);
 
   // Set L1RSTDISABLE of core to low.
   ctrl_reg0.clear(1 << cpu);
@@ -305,13 +319,21 @@ Platform_control::Pmu::cpu_on(int cluster, int cpu) const {
   // Release power switch.
   power_switch_on(cluster, cpu);
 
+  if(cpu == 0)
+    cpu = 4;
   // Clear poweroff gating
   pwroff_gating.clear(1 << cpu);
+  Platform_control::udelay(20);
+  if(cpu == 4)
+    cpu = 0;
 
   // De-assert power-on reset.
   pwron_reset.set(1 << cpu);
+  Platform_control::udelay(10);
+
   // De-assert core reset control.
   rst_ctrl.set(1 << cpu);
+  Platform_control::udelay(10);
 }
 
 IMPLEMENT
@@ -330,6 +352,8 @@ Platform_control::Pmu::power_switch_on(int cluster, int cpu) const {
     printf("Power-switch for cluster:%i cpu:%i already enabled\n", cluster, cpu);
     return;
   }
+
+  printf("Enabling power-switch for cluster:%i cpu:%i\n", cluster, cpu);
 
   pwr_clamp.write(0xFE);
   Platform_control::udelay(20);
@@ -361,4 +385,59 @@ Platform_control::udelay(int us)
   // Running at ~1GHz
   for (int delay = 1000*us; delay; --delay)
     Mem::barrier();
+}
+
+PRIVATE static
+void
+Platform_control::soc_version_init()
+{
+  Address sctrl_vbase = Kmem::mmio_remap(Mem_layout::Sctrl_phys_base);
+  Address sid_vbase = Kmem::mmio_remap(Mem_layout::Sid_phys_base);
+
+  Mmio_register_block sctrl = Mmio_register_block(sctrl_vbase);
+  Mmio_register_block sid = Mmio_register_block(sid_vbase);
+
+  Platform_control::_soc_revision = sctrl.r<Mword>(0x24).read() & 0xFF;
+  for(int i = 0; i < 4; i++) {
+    Platform_control::_soc_chipid[i] = sid.r<Mword>(0x200 + 0x4*i).read();
+  }
+
+  printf(" version [%lx:%lx:%lx:%lx] (rev %i)\n",
+    Platform_control::_soc_chipid[0],
+    Platform_control::_soc_chipid[1],
+    Platform_control::_soc_chipid[2],
+    Platform_control::_soc_chipid[3],
+    Platform_control::_soc_revision);
+}
+
+PRIVATE static
+void
+Platform_control::debug_soc_state()
+{
+  Address ccu_addr = Kmem::mmio_remap(Mem_layout::Ccu_phys_base);
+  Mmio_register_block ccu = Mmio_register_block(ccu_addr);
+  printf(" AXI clock configuration %lx\n", ccu.r<Mword>(0x50).read());
+
+  Address cpu_cfg_addr = Kmem::mmio_remap(Mem_layout::Cpu_cfg_phys_base);
+  Mmio_register_block cpu_cfg = Mmio_register_block(cpu_cfg_addr);
+  printf(" c0 control r0: %lx\n", cpu_cfg.r<Mword>(0x00).read());
+  printf(" c0 control r1: %lx\n", cpu_cfg.r<Mword>(0x04).read());
+  printf(" c1 control r0: %lx\n", cpu_cfg.r<Mword>(0x10).read());
+  printf(" c1 control r1: %lx\n", cpu_cfg.r<Mword>(0x14).read());
+  printf(" debug control: %lx\n", cpu_cfg.r<Mword>(0x20).read());
+  printf(" debug control: %lx\n", cpu_cfg.r<Mword>(0x20).read());
+  printf(" gen control  : %lx\n", cpu_cfg.r<Mword>(0x28).read());
+  printf(" cci control  : %lx\n", cpu_cfg.r<Mword>(0x2C).read());
+  printf(" c0 cpu status: %lx\n", cpu_cfg.r<Mword>(0x30).read());
+  printf(" c1 cpu status: %lx\n", cpu_cfg.r<Mword>(0x34).read());
+
+  Address prcm_addr = Kmem::mmio_remap(Mem_layout::R_prcm_phys_base);
+  Mmio_register_block prcm_cfg = Mmio_register_block(prcm_addr);
+  printf(" c0 power gating : %lx\n", prcm_cfg.r<Mword>(0x100).read());
+  printf(" c1 power gating : %lx\n", prcm_cfg.r<Mword>(0x104).read());
+  for(int i = 0; i < 8; i++)
+    printf(" cpu power switch: %lx\n", prcm_cfg.r<Mword>(0x140 + 0x4*i).read());
+
+  Address rcpu_cfg_addr = Kmem::mmio_remap(Mem_layout::R_cpu_cfg_phys_base);
+  Mmio_register_block rcpu_cfg = Mmio_register_block(rcpu_cfg_addr);
 }

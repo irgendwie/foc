@@ -30,5 +30,9 @@ public:
     R_cpu_cfg_phys_base  = 0x01f01c00,
     /* Ccu (clock generation) configuration */
     Ccu_phys_base        = 0x01c20000,
+    /* System revision version information */
+    Sctrl_phys_base      = 0x01c00000,
+    /* chip_id information */
+    Sid_phys_base        = 0x01c14000,
   };
 };
