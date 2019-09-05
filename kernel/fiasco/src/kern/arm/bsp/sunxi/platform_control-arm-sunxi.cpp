@@ -159,11 +159,17 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   Address prcm_addr = Kmem::mmio_remap(Mem_layout::R_prcm_phys_base);
   Address r_cpucfg_addr = Kmem::mmio_remap(Mem_layout::R_cpu_cfg_phys_base);
   Address cci_addr = Kmem::mmio_remap(Mem_layout::Cci_400_phys_base);
+  Address ccu_addr = Kmem::mmio_remap(Mem_layout::Ccu_phys_base);
+
   Kmem::mmio_remap(Mem_layout::Cci_400_phys_base + Cci::SLAVE_3_Base);
   Kmem::mmio_remap(Mem_layout::Cci_400_phys_base + Cci::SLAVE_4_Base);
 
   pmu.construct(cpucfg_addr, prcm_addr, r_cpucfg_addr);
   cci.construct(cci_addr);
+
+  Mmio_register_block ccu = Mmio_register_block(ccu_addr);
+
+  printf("BPI: AXI clock configuration %lx", ccu.r<Mword>(0x50).read());
 
   printf("BPI M3: powering secondary cluster\n");
   pmu->cluster_on(1);

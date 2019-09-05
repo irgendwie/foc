@@ -78,7 +78,7 @@ Cci::enable_slave_port(int port) {
     return;
   }
 
-  printf("Enabling cci for port %d [%x]\n", port, base);
+  printf("Enabling cci for port %d [%lx]\n", port, base);
 
   r<Mword>(base + CONTOL_REG)
     .set(ENABLE_SNOOP_MASK | ENABLE_DVI_MASK);
