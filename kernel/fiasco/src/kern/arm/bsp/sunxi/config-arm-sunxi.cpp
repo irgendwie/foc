@@ -4,4 +4,5 @@ INTERFACE [arm && pf_sunxi]:
 
 INTERFACE [arm && pf_sunxi_bpim3]:
 
+#undef TARGET_NAME
 #define TARGET_NAME "Allwinner A83T"

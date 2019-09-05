@@ -4,19 +4,25 @@ PREPROCESS_PARTS        += generic_tickless_idle pic_gic libuart
 PREPROCESS_PARTS        += arm_generic_timer
 INTERFACES_KERNEL       += gic
 INTERFACES_KERNEL       += generic_timer
+INTERFACES_KERNEL       += $(if $(CONFIG_PF_SUNXI_BPIM3),cci-400,)
+
 RAM_PHYS_BASE           := 0x40000000
 MPCORE_PHYS_BASE        := 0x01c80000
+TRAMP_MP_ASM_INCLUDE    := $(BSP_SRC_DIR)/tramp-mp-asm.h
 OBJECTS_LIBUART         += uart_16550.o uart_16550_dw.o
+
 SUBSYSTEMS              += LIBUART
 
 uart_IMPL             += uart-arm-sunxi
 config_IMPL           += config-arm-sunxi
 mem_layout_IMPL       += mem_layout-arm-sunxi
 pic_IMPL              += pic-gic pic-arm-sunxi
-#timer_IMPL            += timer-arm-sunxi
+gic_IMPL              += gic gic-arm-sunxi
 timer_IMPL            += timer-arm-generic timer-arm-generic-sunxi
 timer_tick_IMPL       += timer_tick-single-vector
 kernel_uart_IMPL      += kernel_uart-libuart
 reset_IMPL            += reset-arm-sunxi
 clock_IMPL            += clock-generic
+
+# cci for multi-cluster
 platform_control_IMPL += platform_control-arm-sunxi
