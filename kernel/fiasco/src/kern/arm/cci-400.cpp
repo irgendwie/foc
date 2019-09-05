@@ -6,7 +6,6 @@ INTERFACE [arm]:
  * between independent accessor of one addressable memory such as clusters of a
  * potentially asymmetric multi processor system.
 */
-
 #include "mmio_register_block.h"
 
 class Cci : public Mmio_register_block
@@ -15,7 +14,7 @@ public:
   explicit Cci(Address base) : Mmio_register_block(base)
     { }
 
-  enum
+  enum Registers: Address
   {
     // Offset of registers from the base location.
     REGISTER_OFFSET = 0x90000,
@@ -26,11 +25,12 @@ public:
     // cci400 supports two full ACE slaves, three ACE-lite slaves. Not
     // interested in ACE-lite here. The ACE master ones are S3 and S4. Maybe
     // the Mali GPU on S2 is interesting at some point.
-    SLAVE_3_Base    = 0x94000,
-    SLAVE_4_Base    = 0x95000,
+    // These addresses are relative to the REGISTER_OFFSET.
+    SLAVE_3_Base    = 0x4000,
+    SLAVE_4_Base    = 0x5000,
   };
 
-  enum Cci_Slave_interface
+  enum Cci_Slave_interface : Address
   {
     // Main control register.
     CONTOL_REG    = 0x000,
@@ -64,17 +64,29 @@ public:
 
 IMPLEMENTATION [arm]:
 
+#include "io.h"
+#include "kmem.h"
+#include "mem.h"
+#include <cstdio>
+
 // Enable cache control on a slave/processor port.
 PUBLIC
 void
 Cci::enable_slave_port(int port) {
-  Address base;
+  Address base = 0;
   if(!slave_port_base(port, base)) {
     return;
   }
 
+  printf("Enabling cci for port %d [%x]\n", port, base);
+
   r<Mword>(base + CONTOL_REG)
     .set(ENABLE_SNOOP_MASK | ENABLE_DVI_MASK);
+
+  // IMPORTANT! Flush all caches. The continuation seems to page fault on the
+  // next instruction fetch otherwise which is actually a nice safety feature.
+  Mem::dsb();
+
   wait_for_completion();
 }
 

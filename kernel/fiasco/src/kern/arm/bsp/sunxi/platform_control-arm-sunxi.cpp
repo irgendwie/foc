@@ -35,7 +35,7 @@ public:
   };
 
   // System Control registers
-  enum {
+  enum Cpu_Cfg_Registers : Address {
     CPUx_base       = 0x40,
     CPUx_offset     = 0x40,
     CTRL_REG0_base  = 0x00,
@@ -62,7 +62,7 @@ public:
   };
 
   // Power control management registers
-  enum {
+  enum Prcm_Cfg_Registers: Address {
     CPUS_CLK_REG             = 0x00,
     CPUx_PWROFF_GATING_base  = 0x100,
     C0CPUX_PWROFF_GATING_REG = 0x100,
@@ -159,6 +159,8 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   Address prcm_addr = Kmem::mmio_remap(Mem_layout::R_prcm_phys_base);
   Address r_cpucfg_addr = Kmem::mmio_remap(Mem_layout::R_cpu_cfg_phys_base);
   Address cci_addr = Kmem::mmio_remap(Mem_layout::Cci_400_phys_base);
+  Kmem::mmio_remap(Mem_layout::Cci_400_phys_base + Cci::SLAVE_3_Base);
+  Kmem::mmio_remap(Mem_layout::Cci_400_phys_base + Cci::SLAVE_4_Base);
 
   pmu.construct(cpucfg_addr, prcm_addr, r_cpucfg_addr);
   cci.construct(cci_addr);
@@ -167,9 +169,7 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   pmu->cluster_on(1);
 
   printf("BPI M3: starting cci ports\n");
-  for(int i = 0; i < 2; i++) {
-    // cci_init(i);
-  }
+  cci_init();
 
   printf("BPI M3: booting up other cores\n");
   // Ipi::bcast(Ipi::Global_request, Cpu_number::boot_cpu());
@@ -180,10 +180,10 @@ Platform_control::boot_ap_cpus(Address phys_tramp_mp_addr)
   };
 
   /* Start all other cores, assuming this is cluster0-core0 */
-  for(int i = 1; i < 4; i++) {
+  for(int i = 1; i < 8; i++) {
     printf(" enabling %i (mpidr %i)\n", i, phys_ids[i]);
     cpuboot(Cpu_phys_id(phys_ids[i]), phys_tramp_mp_addr);
-    Ipi::send(Ipi::Global_request, Cpu_number::boot_cpu(), Cpu_number(i));
+    // Ipi::send(Ipi::Global_request, Cpu_number::boot_cpu(), Cpu_number(i));
   }
 
   printf("BPI M3: cores running\n");
@@ -207,13 +207,13 @@ Platform_control::cpuboot(Cpu_phys_id target, Address phys_tramp_mp_addr)
 {
   auto id = cxx::int_value<Cpu_phys_id>(target);
   pmu->set_secondary_entry(phys_tramp_mp_addr);
-  pmu->cpu_on((id >> 8) & 2, id & 0x3);
+  pmu->cpu_on(id >> 8, id);
   return 0;
 }
 
 PRIVATE static
-int
-Platform_control::cci_init(int cluster)
+void
+Platform_control::cci_init()
 {
   printf(" enabling slave port 3\n");
   cci->enable_slave_port(3);
@@ -278,8 +278,9 @@ Platform_control::Pmu::cluster_on(int idx) const {
 IMPLEMENT
 void
 Platform_control::Pmu::cpu_on(int cluster, int cpu) const {
-  // Ignore cluster for now.
-  cluster &= 0;
+  // We have two clusters.
+  cluster &= 1;
+  // And four cpus per cluster.
   cpu &= 3;
 
   auto rst_ctrl = _cpu_cfg.r<Mword>(Platform_control::RST_CTRL_base + 0x4*cluster);
